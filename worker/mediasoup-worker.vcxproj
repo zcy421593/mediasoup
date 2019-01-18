@@ -1,0 +1,274 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{DBDDACD5-4ABE-7DDD-CE72-E2E064FF94DF}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>mediasoup-worker</RootNamespace>
+    <IgnoreWarnCompileDuplicatedFilename>true</IgnoreWarnCompileDuplicatedFilename>
+    <PreferredToolArchitecture>x64</PreferredToolArchitecture>
+    <WindowsTargetPlatformVersion>10.0.17763.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+  </PropertyGroup>
+  <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <PlatformToolset>v141</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <PlatformToolset>v141</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="PropertySheets">
+    <Import Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <ExecutablePath>$(ExecutablePath);$(MSBuildProjectDirectory)\.\bin\;$(MSBuildProjectDirectory)\.\bin\</ExecutablePath>
+    <IntDir>$(Configuration)\obj\$(ProjectName)\</IntDir>
+    <OutDir>$(SolutionDir)$(Configuration)\</OutDir>
+    <TargetName>$(ProjectName)</TargetName>
+    <TargetPath>$(OutDir)\$(ProjectName)$(TargetExt)</TargetPath>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>include;deps\jsoncpp\jsoncpp\bundled;deps\netstring\netstring-c;deps\libuv\include;deps\openssl\openssl\include;deps\libsrtp\srtp\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PreprocessorDefinitions>MS_LITTLE_ENDIAN;HAVE_BYTESWAP_METHODS_H;SIZEOF_UNSIGNED_LONG=4;SIZEOF_UNSIGNED_LONG_LONG=8;DEBUG;MS_LOG_TRACE;MS_LOG_FILE_LINE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>iphlpapi.lib;psapi.lib;shell32.lib;userenv.lib;ws2_32.lib;gdi32.lib;advapi32.lib;crypt32.lib;user32.lib</AdditionalDependencies>
+      <OutputFile>$(OutDir)$(ProjectName)$(TargetExt)</OutputFile>
+    </Link>
+    <ResourceCompile>
+      <AdditionalIncludeDirectories>include;deps\jsoncpp\jsoncpp\bundled;deps\netstring\netstring-c;deps\libuv\include;deps\openssl\openssl\include;deps\libsrtp\srtp\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>MS_LITTLE_ENDIAN;HAVE_BYTESWAP_METHODS_H;SIZEOF_UNSIGNED_LONG=4;SIZEOF_UNSIGNED_LONG_LONG=8;DEBUG;MS_LOG_TRACE;MS_LOG_FILE_LINE;%(PreprocessorDefinitions);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ResourceCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>include;deps\jsoncpp\jsoncpp\bundled;deps\netstring\netstring-c;deps\libuv\include;deps\openssl\openssl\include;deps\libsrtp\srtp\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PreprocessorDefinitions>MS_LITTLE_ENDIAN;HAVE_BYTESWAP_METHODS_H;SIZEOF_UNSIGNED_LONG=4;SIZEOF_UNSIGNED_LONG_LONG=8;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>iphlpapi.lib;psapi.lib;shell32.lib;userenv.lib;ws2_32.lib;gdi32.lib;advapi32.lib;crypt32.lib;user32.lib</AdditionalDependencies>
+      <OutputFile>$(OutDir)$(ProjectName)$(TargetExt)</OutputFile>
+    </Link>
+    <ResourceCompile>
+      <AdditionalIncludeDirectories>include;deps\jsoncpp\jsoncpp\bundled;deps\netstring\netstring-c;deps\libuv\include;deps\openssl\openssl\include;deps\libsrtp\srtp\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>MS_LITTLE_ENDIAN;HAVE_BYTESWAP_METHODS_H;SIZEOF_UNSIGNED_LONG=4;SIZEOF_UNSIGNED_LONG_LONG=8;%(PreprocessorDefinitions);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ResourceCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <None Include="include\DepLibSRTP.hpp" />
+    <None Include="include\DepLibUV.hpp" />
+    <None Include="include\DepOpenSSL.hpp" />
+    <None Include="include\LogLevel.hpp" />
+    <None Include="include\Logger.hpp" />
+    <None Include="include\MediaSoupError.hpp" />
+    <None Include="include\Settings.hpp" />
+    <None Include="include\Utils.hpp" />
+    <None Include="include\Worker.hpp" />
+    <None Include="include\common.hpp" />
+    <None Include="include\Channel\Notifier.hpp" />
+    <None Include="include\Channel\Request.hpp" />
+    <None Include="include\Channel\UnixStreamSocket.hpp" />
+    <None Include="include\RTC\Consumer.hpp" />
+    <None Include="include\RTC\ConsumerListener.hpp" />
+    <None Include="include\RTC\DtlsTransport.hpp" />
+    <None Include="include\RTC\IceCandidate.hpp" />
+    <None Include="include\RTC\IceServer.hpp" />
+    <None Include="include\RTC\NackGenerator.hpp" />
+    <None Include="include\RTC\Parameters.hpp" />
+    <None Include="include\RTC\PlainRtpTransport.hpp" />
+    <None Include="include\RTC\Producer.hpp" />
+    <None Include="include\RTC\ProducerListener.hpp" />
+    <None Include="include\RTC\Router.hpp" />
+    <None Include="include\RTC\RtpDictionaries.hpp" />
+    <None Include="include\RTC\RtpListener.hpp" />
+    <None Include="include\RTC\RtpMonitor.hpp" />
+    <None Include="include\RTC\RtpPacket.hpp" />
+    <None Include="include\RTC\RtpStream.hpp" />
+    <None Include="include\RTC\RtpStreamRecv.hpp" />
+    <None Include="include\RTC\RtpStreamSend.hpp" />
+    <None Include="include\RTC\RtpDataCounter.hpp" />
+    <None Include="include\RTC\SeqManager.hpp" />
+    <None Include="include\RTC\SrtpSession.hpp" />
+    <None Include="include\RTC\StunMessage.hpp" />
+    <None Include="include\RTC\TcpConnection.hpp" />
+    <None Include="include\RTC\TcpServer.hpp" />
+    <None Include="include\RTC\Transport.hpp" />
+    <None Include="include\RTC\TransportTuple.hpp" />
+    <None Include="include\RTC\UdpSocket.hpp" />
+    <None Include="include\RTC\WebRtcTransport.hpp" />
+    <None Include="include\RTC\Codecs\Codecs.hpp" />
+    <None Include="include\RTC\Codecs\PayloadDescriptorHandler.hpp" />
+    <None Include="include\RTC\Codecs\H264.hpp" />
+    <None Include="include\RTC\Codecs\VP8.hpp" />
+    <None Include="include\RTC\RTCP\Packet.hpp" />
+    <None Include="include\RTC\RTCP\CompoundPacket.hpp" />
+    <None Include="include\RTC\RTCP\SenderReport.hpp" />
+    <None Include="include\RTC\RTCP\ReceiverReport.hpp" />
+    <None Include="include\RTC\RTCP\Sdes.hpp" />
+    <None Include="include\RTC\RTCP\Bye.hpp" />
+    <None Include="include\RTC\RTCP\Feedback.hpp" />
+    <None Include="include\RTC\RTCP\FeedbackItem.hpp" />
+    <None Include="include\RTC\RTCP\FeedbackPs.hpp" />
+    <None Include="include\RTC\RTCP\FeedbackRtp.hpp" />
+    <None Include="include\RTC\RTCP\FeedbackRtpNack.hpp" />
+    <None Include="include\RTC\RTCP\FeedbackRtpTmmb.hpp" />
+    <None Include="include\RTC\RTCP\FeedbackRtpSrReq.hpp" />
+    <None Include="include\RTC\RTCP\FeedbackRtpTllei.hpp" />
+    <None Include="include\RTC\RTCP\FeedbackRtpEcn.hpp" />
+    <None Include="include\RTC\RTCP\FeedbackPsPli.hpp" />
+    <None Include="include\RTC\RTCP\FeedbackPsSli.hpp" />
+    <None Include="include\RTC\RTCP\FeedbackPsRpsi.hpp" />
+    <None Include="include\RTC\RTCP\FeedbackPsFir.hpp" />
+    <None Include="include\RTC\RTCP\FeedbackPsTst.hpp" />
+    <None Include="include\RTC\RTCP\FeedbackPsVbcm.hpp" />
+    <None Include="include\RTC\RTCP\FeedbackPsLei.hpp" />
+    <None Include="include\RTC\RTCP\FeedbackPsAfb.hpp" />
+    <None Include="include\RTC\RTCP\FeedbackPsRemb.hpp" />
+    <None Include="include\RTC\RemoteBitrateEstimator\AimdRateControl.hpp" />
+    <None Include="include\RTC\RemoteBitrateEstimator\InterArrival.hpp" />
+    <None Include="include\RTC\RemoteBitrateEstimator\OveruseDetector.hpp" />
+    <None Include="include\RTC\RemoteBitrateEstimator\OveruseEstimator.hpp" />
+    <None Include="include\RTC\RemoteBitrateEstimator\RemoteBitrateEstimator.hpp" />
+    <None Include="include\RTC\RemoteBitrateEstimator\RemoteBitrateEstimatorAbsSendTime.hpp" />
+    <None Include="include\RTC\RemoteBitrateEstimator\RemoteBitrateEstimatorSingleStream.hpp" />
+    <None Include="include\handles\SignalsHandler.hpp" />
+    <None Include="include\handles\TcpConnection.hpp" />
+    <None Include="include\handles\TcpServer.hpp" />
+    <None Include="include\handles\Timer.hpp" />
+    <None Include="include\handles\UdpSocket.hpp" />
+    <None Include="include\handles\UnixStreamSocket.hpp" />
+    <None Include="mediasoup-worker.gyp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\DepLibSRTP.cpp" />
+    <ClCompile Include="src\DepLibUV.cpp" />
+    <ClCompile Include="src\DepOpenSSL.cpp" />
+    <ClCompile Include="src\Logger.cpp" />
+    <ClCompile Include="src\Settings.cpp" />
+    <ClCompile Include="src\Worker.cpp" />
+    <ClCompile Include="src\Channel\Notifier.cpp" />
+    <ClCompile Include="src\Channel\Request.cpp" />
+    <ClCompile Include="src\Channel\UnixStreamSocket.cpp" />
+    <ClCompile Include="src\RTC\Consumer.cpp" />
+    <ClCompile Include="src\RTC\DtlsTransport.cpp" />
+    <ClCompile Include="src\RTC\IceCandidate.cpp" />
+    <ClCompile Include="src\RTC\IceServer.cpp" />
+    <ClCompile Include="src\RTC\NackGenerator.cpp" />
+    <ClCompile Include="src\RTC\PlainRtpTransport.cpp" />
+    <ClCompile Include="src\RTC\Producer.cpp" />
+    <ClCompile Include="src\RTC\Router.cpp" />
+    <ClCompile Include="src\RTC\RtpListener.cpp" />
+    <ClCompile Include="src\RTC\RtpMonitor.cpp" />
+    <ClCompile Include="src\RTC\RtpPacket.cpp" />
+    <ClCompile Include="src\RTC\RtpStream.cpp" />
+    <ClCompile Include="src\RTC\RtpStreamRecv.cpp" />
+    <ClCompile Include="src\RTC\RtpStreamSend.cpp" />
+    <ClCompile Include="src\RTC\RtpDataCounter.cpp" />
+    <ClCompile Include="src\RTC\SeqManager.cpp" />
+    <ClCompile Include="src\RTC\SrtpSession.cpp" />
+    <ClCompile Include="src\RTC\StunMessage.cpp" />
+    <ClCompile Include="src\RTC\TcpConnection.cpp" />
+    <ClCompile Include="src\RTC\TcpServer.cpp" />
+    <ClCompile Include="src\RTC\Transport.cpp" />
+    <ClCompile Include="src\RTC\TransportTuple.cpp" />
+    <ClCompile Include="src\RTC\UdpSocket.cpp" />
+    <ClCompile Include="src\RTC\WebRtcTransport.cpp" />
+    <ClCompile Include="src\RTC\Codecs\Codecs.cpp" />
+    <ClCompile Include="src\RTC\Codecs\H264.cpp" />
+    <ClCompile Include="src\RTC\Codecs\VP8.cpp" />
+    <ClCompile Include="src\RTC\RtpDictionaries\Media.cpp" />
+    <ClCompile Include="src\RTC\RtpDictionaries\Parameters.cpp" />
+    <ClCompile Include="src\RTC\RtpDictionaries\RtcpFeedback.cpp" />
+    <ClCompile Include="src\RTC\RtpDictionaries\RtcpParameters.cpp" />
+    <ClCompile Include="src\RTC\RtpDictionaries\RtpCodecMimeType.cpp" />
+    <ClCompile Include="src\RTC\RtpDictionaries\RtpCodecParameters.cpp" />
+    <ClCompile Include="src\RTC\RtpDictionaries\RtpEncodingParameters.cpp" />
+    <ClCompile Include="src\RTC\RtpDictionaries\RtpFecParameters.cpp" />
+    <ClCompile Include="src\RTC\RtpDictionaries\RtpHeaderExtensionParameters.cpp" />
+    <ClCompile Include="src\RTC\RtpDictionaries\RtpHeaderExtensionUri.cpp" />
+    <ClCompile Include="src\RTC\RtpDictionaries\RtpParameters.cpp" />
+    <ClCompile Include="src\RTC\RtpDictionaries\RtpRtxParameters.cpp" />
+    <ClCompile Include="src\RTC\RTCP\Packet.cpp" />
+    <ClCompile Include="src\RTC\RTCP\CompoundPacket.cpp" />
+    <ClCompile Include="src\RTC\RTCP\SenderReport.cpp" />
+    <ClCompile Include="src\RTC\RTCP\ReceiverReport.cpp" />
+    <ClCompile Include="src\RTC\RTCP\Sdes.cpp" />
+    <ClCompile Include="src\RTC\RTCP\Bye.cpp" />
+    <ClCompile Include="src\RTC\RTCP\Feedback.cpp" />
+    <ClCompile Include="src\RTC\RTCP\FeedbackPs.cpp" />
+    <ClCompile Include="src\RTC\RTCP\FeedbackRtp.cpp" />
+    <ClCompile Include="src\RTC\RTCP\FeedbackRtpNack.cpp" />
+    <ClCompile Include="src\RTC\RTCP\FeedbackRtpTmmb.cpp" />
+    <ClCompile Include="src\RTC\RTCP\FeedbackRtpSrReq.cpp" />
+    <ClCompile Include="src\RTC\RTCP\FeedbackRtpTllei.cpp" />
+    <ClCompile Include="src\RTC\RTCP\FeedbackRtpEcn.cpp" />
+    <ClCompile Include="src\RTC\RTCP\FeedbackPsPli.cpp" />
+    <ClCompile Include="src\RTC\RTCP\FeedbackPsSli.cpp" />
+    <ClCompile Include="src\RTC\RTCP\FeedbackPsRpsi.cpp" />
+    <ClCompile Include="src\RTC\RTCP\FeedbackPsFir.cpp" />
+    <ClCompile Include="src\RTC\RTCP\FeedbackPsTst.cpp" />
+    <ClCompile Include="src\RTC\RTCP\FeedbackPsVbcm.cpp" />
+    <ClCompile Include="src\RTC\RTCP\FeedbackPsLei.cpp" />
+    <ClCompile Include="src\RTC\RTCP\FeedbackPsAfb.cpp" />
+    <ClCompile Include="src\RTC\RTCP\FeedbackPsRemb.cpp" />
+    <ClCompile Include="src\RTC\RemoteBitrateEstimator\AimdRateControl.cpp" />
+    <ClCompile Include="src\RTC\RemoteBitrateEstimator\InterArrival.cpp" />
+    <ClCompile Include="src\RTC\RemoteBitrateEstimator\OveruseDetector.cpp" />
+    <ClCompile Include="src\RTC\RemoteBitrateEstimator\OveruseEstimator.cpp" />
+    <ClCompile Include="src\RTC\RemoteBitrateEstimator\RemoteBitrateEstimatorAbsSendTime.cpp" />
+    <ClCompile Include="src\RTC\RemoteBitrateEstimator\RemoteBitrateEstimatorSingleStream.cpp" />
+    <ClCompile Include="src\Utils\Crypto.cpp" />
+    <ClCompile Include="src\Utils\File.cpp" />
+    <ClCompile Include="src\Utils\IP.cpp" />
+    <ClCompile Include="src\handles\SignalsHandler.cpp" />
+    <ClCompile Include="src\handles\TcpConnection.cpp" />
+    <ClCompile Include="src\handles\TcpServer.cpp" />
+    <ClCompile Include="src\handles\Timer.cpp" />
+    <ClCompile Include="src\handles\UdpSocket.cpp" />
+    <ClCompile Include="src\handles\UnixStreamSocket.cpp" />
+    <ClCompile Include="src\main.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="deps\jsoncpp\jsoncpp.vcxproj">
+      <Project>{ADAA7896-18C3-1249-BC39-AB8983ECEC27}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+    <ProjectReference Include="deps\netstring\netstring.vcxproj">
+      <Project>{EA0F4193-3022-B73F-35F7-E8B0DA54856E}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+    <ProjectReference Include="deps\libuv\libuv.vcxproj">
+      <Project>{FE75610F-79E5-5625-B7F3-E4BE2E9B92AA}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+    <ProjectReference Include="deps\openssl\openssl.vcxproj">
+      <Project>{5C6460DB-F7B1-5315-A0DE-79A9DFC525A1}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+    <ProjectReference Include="deps\libsrtp\libsrtp.vcxproj">
+      <Project>{94636E02-2BEA-EE2D-1909-3A8002575EF1}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>

@@ -6,56 +6,62 @@
 
 namespace RTC
 {
-	namespace Codecs
-	{
-		// Codec payload descriptor.
-		struct PayloadDescriptor
-		{
-			virtual ~PayloadDescriptor() = default;
-			virtual void Dump() const    = 0;
-		};
+namespace Codecs
+{
+// Codec payload descriptor.
+struct PayloadDescriptor
+{
+    virtual ~PayloadDescriptor() = default;
+    virtual void Dump() const    = 0;
+};
 
-		// Encoding context used by PayloadDescriptorHandler to properly rewrite the PayloadDescriptor.
-		class EncodingContext
-		{
-		public:
-			struct Preferences
-			{
-				Preferences() = default;
+// Encoding context used by PayloadDescriptorHandler to properly rewrite the PayloadDescriptor.
+class EncodingContext
+{
+public:
+    struct Preferences
+    {
+        Preferences() = default;
+#ifdef max
+#undef max
+#endif
 
-				uint8_t qualityLayer{ std::numeric_limits<uint8_t>::max() };
-				uint8_t spatialLayer{ std::numeric_limits<uint8_t>::max() };
-				uint8_t temporalLayer{ std::numeric_limits<uint8_t>::max() };
-			};
+#ifdef min
+#undef min
+#endif
+        uint8_t qualityLayer { std::numeric_limits<uint8_t>::max() };
+        uint8_t spatialLayer{ std::numeric_limits<uint8_t>::max() };
+        uint8_t temporalLayer{ std::numeric_limits<uint8_t>::max() };
+    };
 
-		public:
-			virtual void SyncRequired() = 0;
-			virtual void SetPreferences(Preferences preferences);
+public:
+    virtual void SyncRequired() = 0;
+    virtual void SetPreferences(Preferences preferences);
 
-		public:
-			virtual ~EncodingContext() = default;
+public:
+    virtual ~EncodingContext() = default;
 
-		public:
-			Preferences preferences;
-		};
+public:
+    Preferences preferences;
+};
 
-		class PayloadDescriptorHandler
-		{
-		public:
-			virtual void Dump() const                                                 = 0;
-			virtual bool Encode(RTC::Codecs::EncodingContext* context, uint8_t* data) = 0;
-			virtual void Restore(uint8_t* data)                                       = 0;
-			virtual bool IsKeyFrame() const                                           = 0;
+class PayloadDescriptorHandler
+{
+public:
+    virtual void Dump() const                                                 = 0;
+    virtual bool Encode(RTC::Codecs::EncodingContext* context, uint8_t* data) = 0;
+    virtual void Restore(uint8_t* data)                                       = 0;
+    virtual bool IsKeyFrame() const                                           = 0;
 
-		public:
-			virtual ~PayloadDescriptorHandler() = default;
-		};
+public:
+    virtual ~PayloadDescriptorHandler() = default;
+};
 
-		inline void EncodingContext::SetPreferences(Preferences preferences)
-		{
-			this->preferences = preferences;
-		}
-	} // namespace Codecs
+inline void EncodingContext::SetPreferences(Preferences preferences)
+{
+    this->preferences = preferences;
+}
+} // namespace Codecs
 } // namespace RTC
 
 #endif
