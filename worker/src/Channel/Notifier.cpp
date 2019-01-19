@@ -6,86 +6,86 @@
 
 namespace Channel
 {
-	/* Instance methods. */
+/* Instance methods. */
 
-	Notifier::Notifier(Channel::UnixStreamSocket* channel) : channel(channel)
-	{
-		MS_TRACE();
-	}
+Notifier::Notifier(Channel::UnixStreamSocket* channel) : channel(channel)
+{
+    MS_TRACE();
+}
 
-	void Notifier::Emit(uint32_t targetId, const std::string& event)
-	{
-		MS_TRACE();
+void Notifier::Emit(uint32_t targetId, const std::string& event)
+{
+    MS_TRACE();
 
-		static const Json::StaticString JsonStringTargetId{ "targetId" };
-		static const Json::StaticString JsonStringEvent{ "event" };
+    static const Json::StaticString JsonStringTargetId{ "targetId" };
+    static const Json::StaticString JsonStringEvent{ "event" };
 
-		Json::Value json(Json::objectValue);
+    Json::Value json(Json::objectValue);
 
-		json[JsonStringTargetId] = Json::UInt{ targetId };
-		json[JsonStringEvent]    = event;
+    json[JsonStringTargetId] = Json::UInt{ targetId };
+    json[JsonStringEvent]    = event;
 
-		this->channel->Send(json);
-	}
+    //this->channel->Send(json);
+}
 
-	void Notifier::Emit(uint32_t targetId, const std::string& event, Json::Value& data)
-	{
-		MS_TRACE();
+void Notifier::Emit(uint32_t targetId, const std::string& event, Json::Value& data)
+{
+    MS_TRACE();
 
-		static const Json::StaticString JsonStringTargetId{ "targetId" };
-		static const Json::StaticString JsonStringEvent{ "event" };
-		static const Json::StaticString JsonStringData{ "data" };
+    static const Json::StaticString JsonStringTargetId{ "targetId" };
+    static const Json::StaticString JsonStringEvent{ "event" };
+    static const Json::StaticString JsonStringData{ "data" };
 
-		Json::Value json(Json::objectValue);
+    Json::Value json(Json::objectValue);
 
-		json[JsonStringTargetId] = Json::UInt{ targetId };
-		json[JsonStringEvent]    = event;
-		json[JsonStringData]     = data;
+    json[JsonStringTargetId] = Json::UInt{ targetId };
+    json[JsonStringEvent]    = event;
+    json[JsonStringData]     = data;
 
-		this->channel->Send(json);
-	}
+    //this->channel->Send(json);
+}
 
-	void Notifier::EmitWithBinary(
-	  uint32_t targetId, const std::string& event, const uint8_t* binaryData, size_t binaryLen)
-	{
-		MS_TRACE();
+void Notifier::EmitWithBinary(
+    uint32_t targetId, const std::string& event, const uint8_t* binaryData, size_t binaryLen)
+{
+    MS_TRACE();
 
-		static const Json::StaticString JsonStringTargetId{ "targetId" };
-		static const Json::StaticString JsonStringEvent{ "event" };
-		static const Json::StaticString JsonStringBinary{ "binary" };
+    static const Json::StaticString JsonStringTargetId{ "targetId" };
+    static const Json::StaticString JsonStringEvent{ "event" };
+    static const Json::StaticString JsonStringBinary{ "binary" };
 
-		Json::Value json(Json::objectValue);
+    Json::Value json(Json::objectValue);
 
-		json[JsonStringTargetId] = Json::UInt{ targetId };
-		json[JsonStringEvent]    = event;
-		json[JsonStringBinary]   = true;
+    json[JsonStringTargetId] = Json::UInt{ targetId };
+    json[JsonStringEvent]    = event;
+    json[JsonStringBinary]   = true;
 
-		this->channel->Send(json);
-		this->channel->SendBinary(binaryData, binaryLen);
-	}
+    //this->channel->Send(json);
+    //this->channel->SendBinary(binaryData, binaryLen);
+}
 
-	void Notifier::EmitWithBinary(
-	  uint32_t targetId,
-	  const std::string& event,
-	  const uint8_t* binaryData,
-	  size_t binaryLen,
-	  Json::Value& data)
-	{
-		MS_TRACE();
+void Notifier::EmitWithBinary(
+    uint32_t targetId,
+    const std::string& event,
+    const uint8_t* binaryData,
+    size_t binaryLen,
+    Json::Value& data)
+{
+    MS_TRACE();
 
-		static const Json::StaticString JsonStringTargetId{ "targetId" };
-		static const Json::StaticString JsonStringEvent{ "event" };
-		static const Json::StaticString JsonStringData{ "data" };
-		static const Json::StaticString JsonStringBinary{ "binary" };
+    static const Json::StaticString JsonStringTargetId{ "targetId" };
+    static const Json::StaticString JsonStringEvent{ "event" };
+    static const Json::StaticString JsonStringData{ "data" };
+    static const Json::StaticString JsonStringBinary{ "binary" };
 
-		Json::Value json(Json::objectValue);
+    Json::Value json(Json::objectValue);
 
-		json[JsonStringTargetId] = Json::UInt{ targetId };
-		json[JsonStringEvent]    = event;
-		json[JsonStringBinary]   = true;
-		json[JsonStringData]     = data;
+    json[JsonStringTargetId] = Json::UInt{ targetId };
+    json[JsonStringEvent]    = event;
+    json[JsonStringBinary]   = true;
+    json[JsonStringData]     = data;
 
-		this->channel->Send(json);
-		this->channel->SendBinary(binaryData, binaryLen);
-	}
+    //this->channel->Send(json);
+    //this->channel->SendBinary(binaryData, binaryLen);
+}
 } // namespace Channel

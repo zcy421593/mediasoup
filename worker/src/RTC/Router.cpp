@@ -15,1790 +15,1834 @@
 
 namespace RTC
 {
-	/* Static. */
-
-	static constexpr uint64_t AudioLevelsInterval{ 500 }; // In ms.
-
-	/* Instance methods. */
-
-	Router::Router(Listener* listener, Channel::Notifier* notifier, uint32_t routerId)
-	  : routerId(routerId), listener(listener), notifier(notifier)
-	{
-		MS_TRACE();
-
-		// Set the audio levels timer.
-		this->audioLevelsTimer = new Timer(this);
-	}
-
-	Router::~Router()
-	{
-		MS_TRACE();
-
-		// Close all the Producers.
-		for (auto it = this->producers.begin(); it != this->producers.end();)
-		{
-			auto* producer = it->second;
-
-			it = this->producers.erase(it);
-			delete producer;
-		}
-
-		// Close all the Consumers.
-		for (auto it = this->consumers.begin(); it != this->consumers.end();)
-		{
-			auto* consumer = it->second;
-
-			it = this->consumers.erase(it);
-			delete consumer;
-		}
-
-		// Close all the Transports.
-		// NOTE: It is critical to close Transports after Producers/Consumers
-		// because their destructor fires an event in the Transport.
-		for (auto it = this->transports.begin(); it != this->transports.end();)
-		{
-			auto* transport = it->second;
-
-			it = this->transports.erase(it);
-			delete transport;
-		}
-
-		// Close the audio level timer.
-		delete this->audioLevelsTimer;
-
-		// Notify the listener.
-		this->listener->OnRouterClosed(this);
-	}
-
-	Json::Value Router::ToJson() const
-	{
-		MS_TRACE();
-
-		static const Json::StaticString JsonStringRouterId{ "routerId" };
-		static const Json::StaticString JsonStringTransports{ "transports" };
-		static const Json::StaticString JsonStringProducers{ "producers" };
-		static const Json::StaticString JsonStringConsumers{ "consumers" };
-		static const Json::StaticString JsonStringMapProducerConsumers{ "mapProducerConsumers" };
-		static const Json::StaticString JsonStringMapConsumerProducer{ "mapConsumerProducer" };
-		static const Json::StaticString JsonStringAudioLevelsEventEnabled{ "audioLevelsEventEnabled" };
-
-		Json::Value json(Json::objectValue);
-		Json::Value jsonTransports(Json::arrayValue);
-		Json::Value jsonProducers(Json::arrayValue);
-		Json::Value jsonConsumers(Json::arrayValue);
-		Json::Value jsonMapProducerConsumers(Json::objectValue);
-		Json::Value jsonMapConsumerProducer(Json::objectValue);
-
-		// Add routerId.
-		json[JsonStringRouterId] = Json::UInt{ this->routerId };
-
-		// Add transports.
-		for (auto& kv : this->transports)
-		{
-			auto* transport = kv.second;
-
-			jsonTransports.append(transport->ToJson());
-		}
-		json[JsonStringTransports] = jsonTransports;
-
-		// Add producers.
-		for (auto& kv : this->producers)
-		{
-			auto* producer = kv.second;
-
-			jsonProducers.append(producer->ToJson());
-		}
-		json[JsonStringProducers] = jsonProducers;
-
-		// Add consumers.
-		for (auto& kv : this->consumers)
-		{
-			auto* consumer = kv.second;
-
-			jsonConsumers.append(consumer->ToJson());
-		}
-		json[JsonStringConsumers] = jsonConsumers;
-
-		// Add mapProducerConsumers.
-		for (auto& kv : this->mapProducerConsumers)
-		{
-			auto* producer  = kv.first;
-			auto& consumers = kv.second;
-			Json::Value jsonProducers(Json::arrayValue);
-
-			for (auto* consumer : consumers)
-			{
-				jsonProducers.append(std::to_string(consumer->consumerId));
-			}
-
-			jsonMapProducerConsumers[std::to_string(producer->producerId)] = jsonProducers;
-		}
-		json[JsonStringMapProducerConsumers] = jsonMapProducerConsumers;
-
-		// Add mapConsumerProducer.
-		for (auto& kv : this->mapConsumerProducer)
-		{
-			auto* consumer = kv.first;
-			auto* producer = kv.second;
-
-			jsonMapConsumerProducer[std::to_string(consumer->consumerId)] =
-			  std::to_string(producer->producerId);
-		}
-		json[JsonStringMapConsumerProducer] = jsonMapConsumerProducer;
-
-		json[JsonStringAudioLevelsEventEnabled] = this->audioLevelsEventEnabled;
-
-		return json;
-	}
-
-	void Router::HandleRequest(Channel::Request* request)
-	{
-		MS_TRACE();
-
-		switch (request->methodId)
-		{
-			case Channel::Request::MethodId::ROUTER_DUMP:
-			{
-				auto json = ToJson();
-
-				request->Accept(json);
-
-				break;
-			}
-
-			case Channel::Request::MethodId::ROUTER_CREATE_WEBRTC_TRANSPORT:
-			{
-				static const Json::StaticString JsonStringUdp{ "udp" };
-				static const Json::StaticString JsonStringTcp{ "tcp" };
-				static const Json::StaticString JsonStringPreferIPv4{ "preferIPv4" };
-				static const Json::StaticString JsonStringPreferIPv6{ "preferIPv6" };
-				static const Json::StaticString JsonStringPreferUdp{ "preferUdp" };
-				static const Json::StaticString JsonStringPreferTcp{ "preferTcp" };
-
-				uint32_t transportId;
-
-				try
-				{
-					transportId = GetNewTransportIdFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
-
-					return;
-				}
-
-				RTC::WebRtcTransport::Options options;
-
-				if (request->data[JsonStringUdp].isBool())
-					options.udp = request->data[JsonStringUdp].asBool();
-				if (request->data[JsonStringTcp].isBool())
-					options.tcp = request->data[JsonStringTcp].asBool();
-				if (request->data[JsonStringPreferIPv4].isBool())
-					options.preferIPv4 = request->data[JsonStringPreferIPv4].asBool();
-				if (request->data[JsonStringPreferIPv6].isBool())
-					options.preferIPv6 = request->data[JsonStringPreferIPv6].asBool();
-				if (request->data[JsonStringPreferUdp].isBool())
-					options.preferUdp = request->data[JsonStringPreferUdp].asBool();
-				if (request->data[JsonStringPreferTcp].isBool())
-					options.preferTcp = request->data[JsonStringPreferTcp].asBool();
-
-				RTC::WebRtcTransport* webrtcTransport;
-
-				try
-				{
-					// NOTE: This may throw.
-					webrtcTransport = new RTC::WebRtcTransport(this, this->notifier, transportId, options);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
-
-					return;
-				}
-
-				// Insert into the map.
-				this->transports[transportId] = webrtcTransport;
-
-				MS_DEBUG_DEV("WebRtcTransport created [transportId:%" PRIu32 "]", transportId);
-
-				auto data = webrtcTransport->ToJson();
-
-				request->Accept(data);
-
-				break;
-			}
-
-			case Channel::Request::MethodId::ROUTER_CREATE_PLAIN_RTP_TRANSPORT:
-			{
-				static const Json::StaticString JsonStringRemoteIP{ "remoteIP" };
-				static const Json::StaticString JsonStringRemotePort{ "remotePort" };
-				static const Json::StaticString JsonStringLocalIP{ "localIP" };
-				static const Json::StaticString JsonStringPreferIPv4{ "preferIPv4" };
-				static const Json::StaticString JsonStringPreferIPv6{ "preferIPv6" };
-
-				uint32_t transportId;
-
-				try
-				{
-					transportId = GetNewTransportIdFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
-
-					return;
-				}
-
-				RTC::PlainRtpTransport::Options options;
-
-				if (request->data[JsonStringRemoteIP].isString())
-					options.remoteIP = request->data[JsonStringRemoteIP].asString();
-
-				if (request->data[JsonStringRemotePort].isUInt())
-					options.remotePort = request->data[JsonStringRemotePort].asUInt();
-
-				if (request->data[JsonStringLocalIP].isString())
-					options.localIP = request->data[JsonStringLocalIP].asString();
-
-				if (request->data[JsonStringPreferIPv4].isBool())
-					options.preferIPv4 = request->data[JsonStringPreferIPv4].asBool();
-
-				if (request->data[JsonStringPreferIPv6].isBool())
-					options.preferIPv6 = request->data[JsonStringPreferIPv6].asBool();
-
-				RTC::PlainRtpTransport* plainRtpTransport;
-
-				try
-				{
-					// NOTE: This may throw.
-					plainRtpTransport = new RTC::PlainRtpTransport(this, this->notifier, transportId, options);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
-
-					return;
-				}
-
-				// Insert into the map.
-				this->transports[transportId] = plainRtpTransport;
-
-				MS_DEBUG_DEV("PlainRtpTransport created [transportId:%" PRIu32 "]", transportId);
-
-				auto data = plainRtpTransport->ToJson();
-
-				request->Accept(data);
-
-				break;
-			}
-
-			case Channel::Request::MethodId::ROUTER_CREATE_PRODUCER:
-			{
-				static const Json::StaticString JsonStringKind{ "kind" };
-				static const Json::StaticString JsonStringRtpParameters{ "rtpParameters" };
-				static const Json::StaticString JsonStringRtpMapping{ "rtpMapping" };
-				static const Json::StaticString JsonStringPaused{ "paused" };
-				static const Json::StaticString JsonStringCodecPayloadTypes{ "codecPayloadTypes" };
-				static const Json::StaticString JsonStringHeaderExtensionIds{ "headerExtensionIds" };
-
-				uint32_t producerId;
-
-				try
-				{
-					producerId = GetNewProducerIdFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
-
-					return;
-				}
-
-				RTC::Transport* transport;
-
-				try
-				{
-					transport = GetTransportFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
-
-					return;
-				}
-
-				if (!request->data[JsonStringKind].isString())
-				{
-					request->Reject("missing data.kind");
-
-					return;
-				}
-				if (!request->data[JsonStringRtpParameters].isObject())
-				{
-					request->Reject("missing data.rtpParameters");
-
-					return;
-				}
-				if (!request->data[JsonStringRtpMapping].isObject())
-				{
-					request->Reject("missing data.rtpMapping");
-
-					return;
-				}
-
-				RTC::Media::Kind kind;
-				std::string kindStr = request->data[JsonStringKind].asString();
-				RTC::RtpParameters rtpParameters;
-
-				try
-				{
-					// NOTE: This may throw.
-					kind = RTC::Media::GetKind(kindStr);
-
-					if (kind == RTC::Media::Kind::ALL)
-						MS_THROW_ERROR("invalid empty kind");
-
-					// NOTE: This may throw.
-					rtpParameters = RTC::RtpParameters(request->data[JsonStringRtpParameters]);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
-
-					return;
-				}
-
-				RTC::Producer::RtpMapping rtpMapping;
-
-				try
-				{
-					auto& jsonRtpMapping = request->data[JsonStringRtpMapping];
-
-					if (!jsonRtpMapping[JsonStringCodecPayloadTypes].isArray())
-						MS_THROW_ERROR("missing rtpMapping.codecPayloadTypes");
-					else if (!jsonRtpMapping[JsonStringHeaderExtensionIds].isArray())
-						MS_THROW_ERROR("missing rtpMapping.headerExtensionIds");
-
-					for (auto& pair : jsonRtpMapping[JsonStringCodecPayloadTypes])
-					{
-						if (!pair.isArray() || pair.size() != 2 || !pair[0].isUInt() || !pair[1].isUInt())
-							MS_THROW_ERROR("wrong rtpMapping.codecPayloadTypes entry");
-
-						auto sourcePayloadType = static_cast<uint8_t>(pair[0].asUInt());
-						auto mappedPayloadType = static_cast<uint8_t>(pair[1].asUInt());
-
-						rtpMapping.codecPayloadTypes[sourcePayloadType] = mappedPayloadType;
-					}
-
-					for (auto& pair : jsonRtpMapping[JsonStringHeaderExtensionIds])
-					{
-						if (!pair.isArray() || pair.size() != 2 || !pair[0].isUInt() || !pair[1].isUInt())
-							MS_THROW_ERROR("wrong rtpMapping entry");
-
-						auto sourceHeaderExtensionId = static_cast<uint8_t>(pair[0].asUInt());
-						auto mappedHeaderExtensionId = static_cast<uint8_t>(pair[1].asUInt());
-
-						rtpMapping.headerExtensionIds[sourceHeaderExtensionId] = mappedHeaderExtensionId;
-					}
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
-
-					return;
-				}
-
-				bool paused = false;
-
-				if (request->data[JsonStringPaused].isBool())
-					paused = request->data[JsonStringPaused].asBool();
-
-				// Create a Producer instance.
-				auto* producer = new RTC::Producer(
-				  this->notifier, producerId, kind, transport, rtpParameters, rtpMapping, paused);
-
-				// Add us as listener.
-				producer->AddListener(this);
-
-				try
-				{
-					// Tell the Transport to handle the new Producer.
-					// NOTE: This may throw.
-					transport->HandleProducer(producer);
-				}
-				catch (const MediaSoupError& error)
-				{
-					delete producer;
-					request->Reject(error.what());
-
-					return;
-				}
-
-				// Insert into the maps.
-				this->producers[producerId] = producer;
-				// Ensure the entry will exist even with an empty array.
-				this->mapProducerConsumers[producer];
-
-				MS_DEBUG_DEV("Producer created [producerId:%" PRIu32 "]", producerId);
-
-				request->Accept();
-
-				break;
-			}
-
-			case Channel::Request::MethodId::ROUTER_CREATE_CONSUMER:
-			{
-				static const Json::StaticString JsonStringKind{ "kind" };
-
-				uint32_t consumerId;
-
-				try
-				{
-					consumerId = GetNewConsumerIdFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
-
-					return;
-				}
-
-				RTC::Producer* producer;
-
-				try
-				{
-					producer = GetProducerFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
-
-					return;
-				}
-
-				if (!request->data[JsonStringKind].isString())
-				{
-					request->Reject("missing data.kind");
-
-					return;
-				}
+/* Static. */
+
+static constexpr uint64_t AudioLevelsInterval{ 500 }; // In ms.
+
+/* Instance methods. */
+
+Router::Router(Listener* listener, Channel::Notifier* notifier, uint32_t routerId)
+    : routerId(routerId), listener(listener), notifier(notifier)
+{
+    MS_TRACE();
+
+    // Set the audio levels timer.
+    this->audioLevelsTimer = new Timer(this);
+}
+
+Router::~Router()
+{
+    MS_TRACE();
+
+    // Close all the Producers.
+    for (auto it = this->producers.begin(); it != this->producers.end();)
+    {
+        auto* producer = it->second;
+
+        it = this->producers.erase(it);
+        delete producer;
+    }
+
+    // Close all the Consumers.
+    for (auto it = this->consumers.begin(); it != this->consumers.end();)
+    {
+        auto* consumer = it->second;
+
+        it = this->consumers.erase(it);
+        delete consumer;
+    }
 
-				RTC::Media::Kind kind;
-				std::string kindStr = request->data[JsonStringKind].asString();
-
-				try
-				{
-					// NOTE: This may throw.
-					kind = RTC::Media::GetKind(kindStr);
-
-					if (kind == RTC::Media::Kind::ALL)
-						MS_THROW_ERROR("invalid empty kind");
-					else if (kind != producer->kind)
-						MS_THROW_ERROR("not matching kind");
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+    // Close all the Transports.
+    // NOTE: It is critical to close Transports after Producers/Consumers
+    // because their destructor fires an event in the Transport.
+    for (auto it = this->transports.begin(); it != this->transports.end();)
+    {
+        auto* transport = it->second;
 
-					return;
-				}
+        it = this->transports.erase(it);
+        delete transport;
+    }
 
-				auto* consumer = new RTC::Consumer(this->notifier, consumerId, kind, producer->producerId);
+    // Close the audio level timer.
+    delete this->audioLevelsTimer;
+
+    // Notify the listener.
+    this->listener->OnRouterClosed(this);
+}
+
+Json::Value Router::ToJson() const
+{
+    MS_TRACE();
+
+    static const Json::StaticString JsonStringRouterId{ "routerId" };
+    static const Json::StaticString JsonStringTransports{ "transports" };
+    static const Json::StaticString JsonStringProducers{ "producers" };
+    static const Json::StaticString JsonStringConsumers{ "consumers" };
+    static const Json::StaticString JsonStringMapProducerConsumers{ "mapProducerConsumers" };
+    static const Json::StaticString JsonStringMapConsumerProducer{ "mapConsumerProducer" };
+    static const Json::StaticString JsonStringAudioLevelsEventEnabled{ "audioLevelsEventEnabled" };
+
+    Json::Value json(Json::objectValue);
+    Json::Value jsonTransports(Json::arrayValue);
+    Json::Value jsonProducers(Json::arrayValue);
+    Json::Value jsonConsumers(Json::arrayValue);
+    Json::Value jsonMapProducerConsumers(Json::objectValue);
+    Json::Value jsonMapConsumerProducer(Json::objectValue);
+
+    // Add routerId.
+    json[JsonStringRouterId] = Json::UInt{ this->routerId };
+
+    // Add transports.
+    for (auto& kv : this->transports)
+    {
+        auto* transport = kv.second;
+
+        jsonTransports.append(transport->ToJson());
+    }
+
+    json[JsonStringTransports] = jsonTransports;
+
+    // Add producers.
+    for (auto& kv : this->producers)
+    {
+        auto* producer = kv.second;
+
+        jsonProducers.append(producer->ToJson());
+    }
+
+    json[JsonStringProducers] = jsonProducers;
+
+    // Add consumers.
+    for (auto& kv : this->consumers)
+    {
+        auto* consumer = kv.second;
+
+        jsonConsumers.append(consumer->ToJson());
+    }
 
-				// If the Producer is paused tell it to the new Consumer.
-				if (producer->IsPaused())
-					consumer->SourcePause();
+    json[JsonStringConsumers] = jsonConsumers;
+
+    // Add mapProducerConsumers.
+    for (auto& kv : this->mapProducerConsumers)
+    {
+        auto* producer  = kv.first;
+        auto& consumers = kv.second;
+        Json::Value jsonProducers(Json::arrayValue);
 
-				// Provide the preferred RTP profile of the Producer.
-				consumer->SetSourcePreferredProfile(producer->GetPreferredProfile());
-
-				// Add us as listener.
-				consumer->AddListener(this);
+        for (auto* consumer : consumers)
+        {
+            jsonProducers.append(std::to_string(consumer->consumerId));
+        }
 
-				auto activeProfiles = producer->GetActiveProfiles();
-				std::map<RTC::RtpEncodingParameters::Profile, const RTC::RtpStream*>::reverse_iterator it;
+        jsonMapProducerConsumers[std::to_string(producer->producerId)] = jsonProducers;
+    }
 
-				for (it = activeProfiles.rbegin(); it != activeProfiles.rend(); ++it)
-				{
-					auto profile = it->first;
-					auto stats   = it->second;
+    json[JsonStringMapProducerConsumers] = jsonMapProducerConsumers;
 
-					consumer->AddProfile(profile, stats);
-				}
+    // Add mapConsumerProducer.
+    for (auto& kv : this->mapConsumerProducer)
+    {
+        auto* consumer = kv.first;
+        auto* producer = kv.second;
+
+        jsonMapConsumerProducer[std::to_string(consumer->consumerId)] =
+            std::to_string(producer->producerId);
+    }
 
-				// Insert into the maps.
-				this->consumers[consumerId] = consumer;
-				this->mapProducerConsumers[producer].insert(consumer);
-				this->mapConsumerProducer[consumer] = producer;
+    json[JsonStringMapConsumerProducer] = jsonMapConsumerProducer;
 
-				MS_DEBUG_DEV("Consumer created [consumerId:%" PRIu32 "]", consumerId);
+    json[JsonStringAudioLevelsEventEnabled] = this->audioLevelsEventEnabled;
 
-				request->Accept();
+    return json;
+}
 
-				break;
-			}
+bool Router::CreateWebrtcTransport(RTC::WebRtcTransport::Options ops)
+{
+    WebRtcTransport* webrtcTransport = nullptr;
 
-			case Channel::Request::MethodId::ROUTER_SET_AUDIO_LEVELS_EVENT:
-			{
-				static const Json::StaticString JsonStringEnabled{ "enabled" };
+    try
+    {
+        // NOTE: This may throw.
+        webrtcTransport = new RTC::WebRtcTransport(this, this->notifier, transportId ++, ops);
+    }
+    catch (const MediaSoupError& error)
+    {
 
-				if (!request->data[JsonStringEnabled].isBool())
-				{
-					request->Reject("Request has invalid data.enabled");
+        return false;
+    }
 
-					return;
-				}
+    // Insert into the map.
+    this->transports[transportId] = webrtcTransport;
+    printf("create router:%s\n", ToJson().toStyledString().c_str());
+    return true;
+}
 
-				bool enabled = request->data[JsonStringEnabled].asBool();
+void Router::HandleRequest(Channel::Request* request)
+{
+    MS_TRACE();
 
-				if (enabled == this->audioLevelsEventEnabled)
-					return;
+    switch (request->methodId)
+    {
+        case Channel::Request::MethodId::ROUTER_DUMP:
+        {
+            auto json = ToJson();
 
-				this->audioLevelsEventEnabled = enabled;
+            request->Accept(json);
 
-				// Clear map of audio levels.
-				this->mapProducerAudioLevelContainer.clear();
+            break;
+        }
 
-				// Start or stop audio levels periodic timer.
-				if (enabled)
-				{
-					MS_DEBUG_DEV("audiolevels event enabled");
-
-					this->audioLevelsTimer->Start(AudioLevelsInterval, AudioLevelsInterval);
-				}
-				else
-				{
-					MS_DEBUG_DEV("audiolevels event disabled");
+        case Channel::Request::MethodId::ROUTER_CREATE_WEBRTC_TRANSPORT:
+        {
+            static const Json::StaticString JsonStringUdp{ "udp" };
+            static const Json::StaticString JsonStringTcp{ "tcp" };
+            static const Json::StaticString JsonStringPreferIPv4{ "preferIPv4" };
+            static const Json::StaticString JsonStringPreferIPv6{ "preferIPv6" };
+            static const Json::StaticString JsonStringPreferUdp{ "preferUdp" };
+            static const Json::StaticString JsonStringPreferTcp{ "preferTcp" };
 
-					this->audioLevelsTimer->Stop();
-				}
+            uint32_t transportId;
 
-				request->Accept();
+            try
+            {
+                transportId = GetNewTransportIdFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-				break;
-			}
+                return;
+            }
 
-			case Channel::Request::MethodId::TRANSPORT_CLOSE:
-			{
-				RTC::Transport* transport;
+            RTC::WebRtcTransport::Options options;
 
-				try
-				{
-					transport = GetTransportFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+            if (request->data[JsonStringUdp].isBool())
+                options.udp = request->data[JsonStringUdp].asBool();
 
-					return;
-				}
+            if (request->data[JsonStringTcp].isBool())
+                options.tcp = request->data[JsonStringTcp].asBool();
 
-				delete transport;
+            if (request->data[JsonStringPreferIPv4].isBool())
+                options.preferIPv4 = request->data[JsonStringPreferIPv4].asBool();
 
-				MS_DEBUG_DEV("Transport closed [transportId:%" PRIu32 "]", transport->transportId);
+            if (request->data[JsonStringPreferIPv6].isBool())
+                options.preferIPv6 = request->data[JsonStringPreferIPv6].asBool();
 
-				request->Accept();
+            if (request->data[JsonStringPreferUdp].isBool())
+                options.preferUdp = request->data[JsonStringPreferUdp].asBool();
 
-				break;
-			}
+            if (request->data[JsonStringPreferTcp].isBool())
+                options.preferTcp = request->data[JsonStringPreferTcp].asBool();
 
-			case Channel::Request::MethodId::TRANSPORT_DUMP:
-			{
-				RTC::Transport* transport;
+            RTC::WebRtcTransport* webrtcTransport;
 
-				try
-				{
-					transport = GetTransportFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+            try
+            {
+                // NOTE: This may throw.
+                webrtcTransport = new RTC::WebRtcTransport(this, this->notifier, transportId, options);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-					return;
-				}
+                return;
+            }
 
-				auto json = transport->ToJson();
+            // Insert into the map.
+            this->transports[transportId] = webrtcTransport;
 
-				request->Accept(json);
+            MS_DEBUG_DEV("WebRtcTransport created [transportId:%" PRIu32 "]", transportId);
 
-				break;
-			}
+            auto data = webrtcTransport->ToJson();
 
-			case Channel::Request::MethodId::TRANSPORT_GET_STATS:
-			{
-				RTC::Transport* transport;
+            request->Accept(data);
 
-				try
-				{
-					transport = GetTransportFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+            break;
+        }
 
-					return;
-				}
+        case Channel::Request::MethodId::ROUTER_CREATE_PLAIN_RTP_TRANSPORT:
+        {
+            static const Json::StaticString JsonStringRemoteIP{ "remoteIP" };
+            static const Json::StaticString JsonStringRemotePort{ "remotePort" };
+            static const Json::StaticString JsonStringLocalIP{ "localIP" };
+            static const Json::StaticString JsonStringPreferIPv4{ "preferIPv4" };
+            static const Json::StaticString JsonStringPreferIPv6{ "preferIPv6" };
 
-				auto json = transport->GetStats();
+            uint32_t transportId;
 
-				request->Accept(json);
+            try
+            {
+                transportId = GetNewTransportIdFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-				break;
-			}
+                return;
+            }
 
-			case Channel::Request::MethodId::TRANSPORT_SET_REMOTE_DTLS_PARAMETERS:
-			{
-				static const Json::StaticString JsonStringRole{ "role" };
-				static const Json::StaticString JsonStringClient{ "client" };
-				static const Json::StaticString JsonStringServer{ "server" };
-				static const Json::StaticString JsonStringFingerprints{ "fingerprints" };
-				static const Json::StaticString JsonStringAlgorithm{ "algorithm" };
-				static const Json::StaticString JsonStringValue{ "value" };
+            RTC::PlainRtpTransport::Options options;
 
-				RTC::Transport* transport;
+            if (request->data[JsonStringRemoteIP].isString())
+                options.remoteIP = request->data[JsonStringRemoteIP].asString();
 
-				try
-				{
-					transport = GetTransportFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+            if (request->data[JsonStringRemotePort].isUInt())
+                options.remotePort = request->data[JsonStringRemotePort].asUInt();
 
-					return;
-				}
-
-				if (!request->data[JsonStringFingerprints].isArray())
-				{
-					request->Reject("missing data.fingerprints");
-
-					return;
-				}
+            if (request->data[JsonStringLocalIP].isString())
+                options.localIP = request->data[JsonStringLocalIP].asString();
 
-				RTC::DtlsTransport::Fingerprint remoteFingerprint;
-				// Default value if missing.
-				RTC::DtlsTransport::Role remoteRole{ RTC::DtlsTransport::Role::AUTO };
+            if (request->data[JsonStringPreferIPv4].isBool())
+                options.preferIPv4 = request->data[JsonStringPreferIPv4].asBool();
 
-				auto& jsonArray = request->data[JsonStringFingerprints];
+            if (request->data[JsonStringPreferIPv6].isBool())
+                options.preferIPv6 = request->data[JsonStringPreferIPv6].asBool();
 
-				for (Json::Value::ArrayIndex i = jsonArray.size() - 1; static_cast<int32_t>(i) >= 0; --i)
-				{
-					auto& jsonFingerprint = jsonArray[i];
+            RTC::PlainRtpTransport* plainRtpTransport;
 
-					if (!jsonFingerprint.isObject())
-					{
-						request->Reject("wrong fingerprint");
+            try
+            {
+                // NOTE: This may throw.
+                plainRtpTransport = new RTC::PlainRtpTransport(this, this->notifier, transportId, options);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-						return;
-					}
-					if (!jsonFingerprint[JsonStringAlgorithm].isString() || !jsonFingerprint[JsonStringValue].isString())
-					{
-						request->Reject("missing data.fingerprint.algorithm and/or data.fingerprint.value");
+                return;
+            }
 
-						return;
-					}
+            // Insert into the map.
+            this->transports[transportId] = plainRtpTransport;
 
-					remoteFingerprint.algorithm = RTC::DtlsTransport::GetFingerprintAlgorithm(
-					  jsonFingerprint[JsonStringAlgorithm].asString());
-
-					if (remoteFingerprint.algorithm != RTC::DtlsTransport::FingerprintAlgorithm::NONE)
-					{
-						remoteFingerprint.value = jsonFingerprint[JsonStringValue].asString();
+            MS_DEBUG_DEV("PlainRtpTransport created [transportId:%" PRIu32 "]", transportId);
 
-						break;
-					}
-				}
+            auto data = plainRtpTransport->ToJson();
 
-				if (request->data[JsonStringRole].isString())
-					remoteRole = RTC::DtlsTransport::StringToRole(request->data[JsonStringRole].asString());
+            request->Accept(data);
 
-				RTC::DtlsTransport::Role localRole;
+            break;
+        }
 
-				try
-				{
-					auto* webrtcTransport = dynamic_cast<RTC::WebRtcTransport*>(transport);
+        case Channel::Request::MethodId::ROUTER_CREATE_PRODUCER:
+        {
+            static const Json::StaticString JsonStringKind{ "kind" };
+            static const Json::StaticString JsonStringRtpParameters{ "rtpParameters" };
+            static const Json::StaticString JsonStringRtpMapping{ "rtpMapping" };
+            static const Json::StaticString JsonStringPaused{ "paused" };
+            static const Json::StaticString JsonStringCodecPayloadTypes{ "codecPayloadTypes" };
+            static const Json::StaticString JsonStringHeaderExtensionIds{ "headerExtensionIds" };
 
-					// This may throw.
-					localRole = webrtcTransport->SetRemoteDtlsParameters(remoteFingerprint, remoteRole);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+            uint32_t producerId;
 
-					return;
-				}
+            try
+            {
+                producerId = GetNewProducerIdFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-				Json::Value data(Json::objectValue);
+                return;
+            }
 
-				switch (localRole)
-				{
-					case RTC::DtlsTransport::Role::CLIENT:
-					{
-						data[JsonStringRole] = JsonStringClient;
+            RTC::Transport* transport;
 
-						break;
-					}
-					case RTC::DtlsTransport::Role::SERVER:
-					{
-						data[JsonStringRole] = JsonStringServer;
+            try
+            {
+                transport = GetTransportFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-						break;
-					}
-					default:
-					{
-						MS_ABORT("invalid local DTLS role");
-					}
-				}
+                return;
+            }
 
-				request->Accept(data);
+            if (!request->data[JsonStringKind].isString())
+            {
+                request->Reject("missing data.kind");
 
-				break;
-			}
+                return;
+            }
 
-			case Channel::Request::MethodId::TRANSPORT_SET_REMOTE_PARAMETERS:
-			{
-				static const Json::StaticString JsonStringIP{ "ip" };
-				static const Json::StaticString JsonStringPort{ "port" };
+            if (!request->data[JsonStringRtpParameters].isObject())
+            {
+                request->Reject("missing data.rtpParameters");
 
-				RTC::Transport* transport;
+                return;
+            }
 
-				try
-				{
-					transport = GetTransportFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+            if (!request->data[JsonStringRtpMapping].isObject())
+            {
+                request->Reject("missing data.rtpMapping");
 
-					return;
-				}
+                return;
+            }
 
-				if (!request->data[JsonStringIP].isString())
-				{
-					request->Reject("missing data.ip");
+            RTC::Media::Kind kind;
+            std::string kindStr = request->data[JsonStringKind].asString();
+            RTC::RtpParameters rtpParameters;
 
-					return;
-				}
+            try
+            {
+                // NOTE: This may throw.
+                kind = RTC::Media::GetKind(kindStr);
 
-				if (!request->data[JsonStringPort].isUInt())
-				{
-					request->Reject("missing data.port");
+                if (kind == RTC::Media::Kind::ALL)
+                    MS_THROW_ERROR("invalid empty kind");
 
-					return;
-				}
+                // NOTE: This may throw.
+                rtpParameters = RTC::RtpParameters(request->data[JsonStringRtpParameters]);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-				auto ip   = std::string{ request->data[JsonStringIP].asString() };
-				auto port = uint32_t{ request->data[JsonStringPort].asUInt() };
+                return;
+            }
 
-				try
-				{
-					auto* plainRtpTransport = dynamic_cast<RTC::PlainRtpTransport*>(transport);
+            RTC::Producer::RtpMapping rtpMapping;
 
-					// This may throw.
-					plainRtpTransport->SetRemoteParameters(ip, port);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+            try
+            {
+                auto& jsonRtpMapping = request->data[JsonStringRtpMapping];
 
-					return;
-				}
+                if (!jsonRtpMapping[JsonStringCodecPayloadTypes].isArray())
+                    MS_THROW_ERROR("missing rtpMapping.codecPayloadTypes");
+                else if (!jsonRtpMapping[JsonStringHeaderExtensionIds].isArray())
+                    MS_THROW_ERROR("missing rtpMapping.headerExtensionIds");
 
-				request->Accept();
+                for (auto& pair : jsonRtpMapping[JsonStringCodecPayloadTypes])
+                {
+                    if (!pair.isArray() || pair.size() != 2 || !pair[0].isUInt() || !pair[1].isUInt())
+                        MS_THROW_ERROR("wrong rtpMapping.codecPayloadTypes entry");
 
-				break;
-			}
+                    auto sourcePayloadType = static_cast<uint8_t>(pair[0].asUInt());
+                    auto mappedPayloadType = static_cast<uint8_t>(pair[1].asUInt());
 
-			case Channel::Request::MethodId::TRANSPORT_SET_MAX_BITRATE:
-			{
-				static const Json::StaticString JsonStringBitrate{ "bitrate" };
+                    rtpMapping.codecPayloadTypes[sourcePayloadType] = mappedPayloadType;
+                }
 
-				RTC::Transport* transport;
+                for (auto& pair : jsonRtpMapping[JsonStringHeaderExtensionIds])
+                {
+                    if (!pair.isArray() || pair.size() != 2 || !pair[0].isUInt() || !pair[1].isUInt())
+                        MS_THROW_ERROR("wrong rtpMapping entry");
 
-				try
-				{
-					transport = GetTransportFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+                    auto sourceHeaderExtensionId = static_cast<uint8_t>(pair[0].asUInt());
+                    auto mappedHeaderExtensionId = static_cast<uint8_t>(pair[1].asUInt());
 
-					return;
-				}
+                    rtpMapping.headerExtensionIds[sourceHeaderExtensionId] = mappedHeaderExtensionId;
+                }
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-				if (!request->data[JsonStringBitrate].isUInt())
-				{
-					request->Reject("missing data.bitrate");
+                return;
+            }
 
-					return;
-				}
+            bool paused = false;
 
-				auto bitrate = uint32_t{ request->data[JsonStringBitrate].asUInt() };
+            if (request->data[JsonStringPaused].isBool())
+                paused = request->data[JsonStringPaused].asBool();
 
-				auto* webrtcTransport = dynamic_cast<RTC::WebRtcTransport*>(transport);
+            // Create a Producer instance.
+            auto* producer = new RTC::Producer(
+                this->notifier, producerId, kind, transport, rtpParameters, rtpMapping, paused);
 
-				webrtcTransport->SetMaxBitrate(bitrate);
+            // Add us as listener.
+            producer->AddListener(this);
 
-				request->Accept();
+            try
+            {
+                // Tell the Transport to handle the new Producer.
+                // NOTE: This may throw.
+                transport->HandleProducer(producer);
+            }
+            catch (const MediaSoupError& error)
+            {
+                delete producer;
+                request->Reject(error.what());
 
-				break;
-			}
+                return;
+            }
 
-			case Channel::Request::MethodId::TRANSPORT_CHANGE_UFRAG_PWD:
-			{
-				static const Json::StaticString JsonStringUsernameFragment{ "usernameFragment" };
-				static const Json::StaticString JsonStringPassword{ "password" };
+            // Insert into the maps.
+            this->producers[producerId] = producer;
+            // Ensure the entry will exist even with an empty array.
+            this->mapProducerConsumers[producer];
 
-				RTC::Transport* transport;
+            MS_DEBUG_DEV("Producer created [producerId:%" PRIu32 "]", producerId);
 
-				try
-				{
-					transport = GetTransportFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+            request->Accept();
 
-					return;
-				}
+            break;
+        }
 
-				std::string usernameFragment = Utils::Crypto::GetRandomString(16);
-				std::string password         = Utils::Crypto::GetRandomString(32);
+        case Channel::Request::MethodId::ROUTER_CREATE_CONSUMER:
+        {
+            static const Json::StaticString JsonStringKind{ "kind" };
 
-				auto* webrtcTransport = dynamic_cast<RTC::WebRtcTransport*>(transport);
+            uint32_t consumerId;
 
-				webrtcTransport->ChangeUfragPwd(usernameFragment, password);
+            try
+            {
+                consumerId = GetNewConsumerIdFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-				Json::Value data(Json::objectValue);
+                return;
+            }
 
-				data[JsonStringUsernameFragment] = usernameFragment;
-				data[JsonStringPassword]         = password;
+            RTC::Producer* producer;
 
-				request->Accept(data);
+            try
+            {
+                producer = GetProducerFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-				break;
-			}
+                return;
+            }
 
-			case Channel::Request::MethodId::TRANSPORT_START_MIRRORING:
-			{
-				static const Json::StaticString JsonStringRemoteIP{ "remoteIP" };
-				static const Json::StaticString JsonStringRemotePort{ "remotePort" };
-				static const Json::StaticString JsonStringLocalIP{ "localIP" };
-				static const Json::StaticString JsonStringSendRtp{ "sendRtp" };
-				static const Json::StaticString JsonStringSendRtcp{ "sendRtcp" };
-				static const Json::StaticString JsonStringRecvRtp{ "recvRtp" };
-				static const Json::StaticString JsonStringRecvRtcp{ "recvRtcp" };
+            if (!request->data[JsonStringKind].isString())
+            {
+                request->Reject("missing data.kind");
 
-				RTC::Transport* transport;
+                return;
+            }
 
-				try
-				{
-					transport = GetTransportFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+            RTC::Media::Kind kind;
+            std::string kindStr = request->data[JsonStringKind].asString();
 
-					return;
-				}
+            try
+            {
+                // NOTE: This may throw.
+                kind = RTC::Media::GetKind(kindStr);
 
-				RTC::Transport::MirroringOptions options;
+                if (kind == RTC::Media::Kind::ALL)
+                    MS_THROW_ERROR("invalid empty kind");
+                else if (kind != producer->kind)
+                    MS_THROW_ERROR("not matching kind");
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-				if (!request->data[JsonStringRemoteIP].isString())
-				{
-					request->Reject("missing remoteIP");
+                return;
+            }
 
-					return;
-				}
+            auto* consumer = new RTC::Consumer(this->notifier, consumerId, kind, producer->producerId);
 
-				options.remoteIP = request->data[JsonStringRemoteIP].asString();
+            // If the Producer is paused tell it to the new Consumer.
+            if (producer->IsPaused())
+                consumer->SourcePause();
 
-				if (!request->data[JsonStringRemotePort].isUInt())
-				{
-					request->Reject("missing remotePort");
+            // Provide the preferred RTP profile of the Producer.
+            consumer->SetSourcePreferredProfile(producer->GetPreferredProfile());
 
-					return;
-				}
+            // Add us as listener.
+            consumer->AddListener(this);
 
-				options.remotePort = request->data[JsonStringRemotePort].asUInt();
+            auto activeProfiles = producer->GetActiveProfiles();
+            std::map<RTC::RtpEncodingParameters::Profile, const RTC::RtpStream*>::reverse_iterator it;
 
-				if (request->data[JsonStringLocalIP].isString())
-					options.localIP = request->data[JsonStringLocalIP].asString();
+            for (it = activeProfiles.rbegin(); it != activeProfiles.rend(); ++it)
+            {
+                auto profile = it->first;
+                auto stats   = it->second;
 
-				if (request->data[JsonStringSendRtp].isBool())
-					options.sendRtp = request->data[JsonStringSendRtp].asBool();
-				if (request->data[JsonStringSendRtcp].isBool())
-					options.sendRtcp = request->data[JsonStringSendRtcp].asBool();
-				if (request->data[JsonStringRecvRtp].isBool())
-					options.recvRtp = request->data[JsonStringRecvRtp].asBool();
-				if (request->data[JsonStringRecvRtcp].isBool())
-					options.recvRtcp = request->data[JsonStringRecvRtcp].asBool();
+                consumer->AddProfile(profile, stats);
+            }
 
-				try
-				{
-					transport->StartMirroring(options);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+            // Insert into the maps.
+            this->consumers[consumerId] = consumer;
+            this->mapProducerConsumers[producer].insert(consumer);
+            this->mapConsumerProducer[consumer] = producer;
 
-					return;
-				}
+            MS_DEBUG_DEV("Consumer created [consumerId:%" PRIu32 "]", consumerId);
 
-				MS_DEBUG_DEV("Transport mirroring started [transportId:%" PRIu32 "]", transport->transportId);
+            request->Accept();
 
-				request->Accept();
+            break;
+        }
 
-				break;
-			}
+        case Channel::Request::MethodId::ROUTER_SET_AUDIO_LEVELS_EVENT:
+        {
+            static const Json::StaticString JsonStringEnabled{ "enabled" };
 
-			case Channel::Request::MethodId::TRANSPORT_STOP_MIRRORING:
-			{
-				RTC::Transport* transport;
+            if (!request->data[JsonStringEnabled].isBool())
+            {
+                request->Reject("Request has invalid data.enabled");
 
-				try
-				{
-					transport = GetTransportFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+                return;
+            }
 
-					return;
-				}
+            bool enabled = request->data[JsonStringEnabled].asBool();
 
-				transport->StopMirroring();
+            if (enabled == this->audioLevelsEventEnabled)
+                return;
 
-				MS_DEBUG_DEV("Transport mirroring stopped [transportId:%" PRIu32 "]", transport->transportId);
+            this->audioLevelsEventEnabled = enabled;
 
-				request->Accept();
+            // Clear map of audio levels.
+            this->mapProducerAudioLevelContainer.clear();
 
-				break;
-			}
+            // Start or stop audio levels periodic timer.
+            if (enabled)
+            {
+                MS_DEBUG_DEV("audiolevels event enabled");
 
-			case Channel::Request::MethodId::PRODUCER_CLOSE:
-			{
-				RTC::Producer* producer;
+                this->audioLevelsTimer->Start(AudioLevelsInterval, AudioLevelsInterval);
+            }
+            else
+            {
+                MS_DEBUG_DEV("audiolevels event disabled");
 
-				try
-				{
-					producer = GetProducerFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+                this->audioLevelsTimer->Stop();
+            }
 
-					return;
-				}
+            request->Accept();
 
-				delete producer;
+            break;
+        }
 
-				MS_DEBUG_DEV("Producer closed [producerId:%" PRIu32 "]", producer->producerId);
+        case Channel::Request::MethodId::TRANSPORT_CLOSE:
+        {
+            RTC::Transport* transport;
 
-				request->Accept();
+            try
+            {
+                transport = GetTransportFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-				break;
-			}
+                return;
+            }
 
-			case Channel::Request::MethodId::PRODUCER_DUMP:
-			{
-				RTC::Producer* producer;
+            delete transport;
 
-				try
-				{
-					producer = GetProducerFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+            MS_DEBUG_DEV("Transport closed [transportId:%" PRIu32 "]", transport->transportId);
 
-					return;
-				}
+            request->Accept();
 
-				auto json = producer->ToJson();
+            break;
+        }
 
-				request->Accept(json);
+        case Channel::Request::MethodId::TRANSPORT_DUMP:
+        {
+            RTC::Transport* transport;
 
-				break;
-			}
+            try
+            {
+                transport = GetTransportFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-			case Channel::Request::MethodId::PRODUCER_GET_STATS:
-			{
-				RTC::Producer* producer;
+                return;
+            }
 
-				try
-				{
-					producer = GetProducerFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+            auto json = transport->ToJson();
 
-					return;
-				}
+            request->Accept(json);
 
-				auto json = producer->GetStats();
+            break;
+        }
 
-				request->Accept(json);
+        case Channel::Request::MethodId::TRANSPORT_GET_STATS:
+        {
+            RTC::Transport* transport;
 
-				break;
-			}
+            try
+            {
+                transport = GetTransportFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-			case Channel::Request::MethodId::PRODUCER_PAUSE:
-			{
-				RTC::Producer* producer;
+                return;
+            }
 
-				try
-				{
-					producer = GetProducerFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+            auto json = transport->GetStats();
 
-					return;
-				}
+            request->Accept(json);
 
-				producer->Pause();
+            break;
+        }
 
-				request->Accept();
+        case Channel::Request::MethodId::TRANSPORT_SET_REMOTE_DTLS_PARAMETERS:
+        {
+            static const Json::StaticString JsonStringRole{ "role" };
+            static const Json::StaticString JsonStringClient{ "client" };
+            static const Json::StaticString JsonStringServer{ "server" };
+            static const Json::StaticString JsonStringFingerprints{ "fingerprints" };
+            static const Json::StaticString JsonStringAlgorithm{ "algorithm" };
+            static const Json::StaticString JsonStringValue{ "value" };
 
-				break;
-			}
+            RTC::Transport* transport;
 
-			case Channel::Request::MethodId::PRODUCER_RESUME:
-			{
-				RTC::Producer* producer;
+            try
+            {
+                transport = GetTransportFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-				try
-				{
-					producer = GetProducerFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+                return;
+            }
 
-					return;
-				}
+            if (!request->data[JsonStringFingerprints].isArray())
+            {
+                request->Reject("missing data.fingerprints");
 
-				producer->Resume();
+                return;
+            }
 
-				request->Accept();
+            RTC::DtlsTransport::Fingerprint remoteFingerprint;
+            // Default value if missing.
+            RTC::DtlsTransport::Role remoteRole{ RTC::DtlsTransport::Role::AUTO };
 
-				break;
-			}
+            auto& jsonArray = request->data[JsonStringFingerprints];
 
-			case Channel::Request::MethodId::PRODUCER_SET_PREFERRED_PROFILE:
-			{
-				static const Json::StaticString JsonStringProfile{ "profile" };
+            for (Json::Value::ArrayIndex i = jsonArray.size() - 1; static_cast<int32_t>(i) >= 0; --i)
+            {
+                auto& jsonFingerprint = jsonArray[i];
 
-				RTC::Producer* producer;
+                if (!jsonFingerprint.isObject())
+                {
+                    request->Reject("wrong fingerprint");
 
-				try
-				{
-					producer = GetProducerFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+                    return;
+                }
 
-					return;
-				}
+                if (!jsonFingerprint[JsonStringAlgorithm].isString() || !jsonFingerprint[JsonStringValue].isString())
+                {
+                    request->Reject("missing data.fingerprint.algorithm and/or data.fingerprint.value");
 
-				if (!request->data[JsonStringProfile].isString())
-				{
-					request->Reject("missing data.profile");
+                    return;
+                }
 
-					return;
-				}
+                remoteFingerprint.algorithm = RTC::DtlsTransport::GetFingerprintAlgorithm(
+                                                  jsonFingerprint[JsonStringAlgorithm].asString());
 
-				std::string profileStr = request->data[JsonStringProfile].asString();
-				auto it                = RTC::RtpEncodingParameters::string2Profile.find(profileStr);
+                if (remoteFingerprint.algorithm != RTC::DtlsTransport::FingerprintAlgorithm::NONE)
+                {
+                    remoteFingerprint.value = jsonFingerprint[JsonStringValue].asString();
 
-				if (it == RTC::RtpEncodingParameters::string2Profile.end())
-				{
-					request->Reject("unknown profile");
+                    break;
+                }
+            }
 
-					return;
-				}
+            if (request->data[JsonStringRole].isString())
+                remoteRole = RTC::DtlsTransport::StringToRole(request->data[JsonStringRole].asString());
 
-				auto profile = it->second;
+            RTC::DtlsTransport::Role localRole;
 
-				if (profile == RTC::RtpEncodingParameters::Profile::NONE)
-				{
-					request->Reject("invalid profile");
+            try
+            {
+                auto* webrtcTransport = dynamic_cast<RTC::WebRtcTransport*>(transport);
 
-					return;
-				}
+                // This may throw.
+                localRole = webrtcTransport->SetRemoteDtlsParameters(remoteFingerprint, remoteRole);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-				if (profile != producer->GetPreferredProfile())
-				{
-					producer->SetPreferredProfile(profile);
+                return;
+            }
 
-					auto& consumers = this->mapProducerConsumers[producer];
+            Json::Value data(Json::objectValue);
 
-					for (auto* consumer : consumers)
-					{
-						consumer->SetSourcePreferredProfile(profile);
-					}
-				}
+            switch (localRole)
+            {
+                case RTC::DtlsTransport::Role::CLIENT:
+                {
+                    data[JsonStringRole] = JsonStringClient;
 
-				request->Accept();
+                    break;
+                }
 
-				break;
-			}
+                case RTC::DtlsTransport::Role::SERVER:
+                {
+                    data[JsonStringRole] = JsonStringServer;
 
-			case Channel::Request::MethodId::CONSUMER_CLOSE:
-			{
-				RTC::Consumer* consumer;
+                    break;
+                }
 
-				try
-				{
-					consumer = GetConsumerFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+                default:
+                {
+                    MS_ABORT("invalid local DTLS role");
+                }
+            }
 
-					return;
-				}
+            request->Accept(data);
 
-				delete consumer;
+            break;
+        }
 
-				request->Accept();
+        case Channel::Request::MethodId::TRANSPORT_SET_REMOTE_PARAMETERS:
+        {
+            static const Json::StaticString JsonStringIP{ "ip" };
+            static const Json::StaticString JsonStringPort{ "port" };
 
-				break;
-			}
+            RTC::Transport* transport;
 
-			case Channel::Request::MethodId::CONSUMER_ENABLE:
-			{
-				static const Json::StaticString JsonStringRtpParameters{ "rtpParameters" };
+            try
+            {
+                transport = GetTransportFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-				RTC::Consumer* consumer;
+                return;
+            }
 
-				try
-				{
-					consumer = GetConsumerFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+            if (!request->data[JsonStringIP].isString())
+            {
+                request->Reject("missing data.ip");
 
-					return;
-				}
+                return;
+            }
 
-				RTC::Transport* transport;
+            if (!request->data[JsonStringPort].isUInt())
+            {
+                request->Reject("missing data.port");
 
-				try
-				{
-					transport = GetTransportFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+                return;
+            }
 
-					return;
-				}
+            auto ip   = std::string{ request->data[JsonStringIP].asString() };
+            auto port = uint32_t{ request->data[JsonStringPort].asUInt() };
 
-				if (!request->data[JsonStringRtpParameters].isObject())
-				{
-					request->Reject("missing data.rtpParameters");
+            try
+            {
+                auto* plainRtpTransport = dynamic_cast<RTC::PlainRtpTransport*>(transport);
 
-					return;
-				}
+                // This may throw.
+                plainRtpTransport->SetRemoteParameters(ip, port);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-				RTC::RtpParameters rtpParameters;
+                return;
+            }
 
-				try
-				{
-					// NOTE: This may throw.
-					rtpParameters = RTC::RtpParameters(request->data[JsonStringRtpParameters]);
+            request->Accept();
 
-					// NOTE: This may throw.
-					consumer->Enable(transport, rtpParameters);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+            break;
+        }
 
-					return;
-				}
+        case Channel::Request::MethodId::TRANSPORT_SET_MAX_BITRATE:
+        {
+            static const Json::StaticString JsonStringBitrate{ "bitrate" };
 
-				// Tell the Transport to handle the new Consumer.
-				transport->HandleConsumer(consumer);
+            RTC::Transport* transport;
 
-				request->Accept();
+            try
+            {
+                transport = GetTransportFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-				break;
-			}
+                return;
+            }
 
-			case Channel::Request::MethodId::CONSUMER_DUMP:
-			{
-				RTC::Consumer* consumer;
+            if (!request->data[JsonStringBitrate].isUInt())
+            {
+                request->Reject("missing data.bitrate");
 
-				try
-				{
-					consumer = GetConsumerFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+                return;
+            }
 
-					return;
-				}
+            auto bitrate = uint32_t{ request->data[JsonStringBitrate].asUInt() };
 
-				auto json = consumer->ToJson();
+            auto* webrtcTransport = dynamic_cast<RTC::WebRtcTransport*>(transport);
 
-				request->Accept(json);
+            webrtcTransport->SetMaxBitrate(bitrate);
 
-				break;
-			}
+            request->Accept();
 
-			case Channel::Request::MethodId::CONSUMER_GET_STATS:
-			{
-				RTC::Consumer* consumer;
+            break;
+        }
 
-				try
-				{
-					consumer = GetConsumerFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+        case Channel::Request::MethodId::TRANSPORT_CHANGE_UFRAG_PWD:
+        {
+            static const Json::StaticString JsonStringUsernameFragment{ "usernameFragment" };
+            static const Json::StaticString JsonStringPassword{ "password" };
 
-					return;
-				}
+            RTC::Transport* transport;
 
-				auto json = consumer->GetStats();
+            try
+            {
+                transport = GetTransportFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-				request->Accept(json);
+                return;
+            }
 
-				break;
-			}
+            std::string usernameFragment = Utils::Crypto::GetRandomString(16);
+            std::string password         = Utils::Crypto::GetRandomString(32);
 
-			case Channel::Request::MethodId::CONSUMER_PAUSE:
-			{
-				RTC::Consumer* consumer;
+            auto* webrtcTransport = dynamic_cast<RTC::WebRtcTransport*>(transport);
 
-				try
-				{
-					consumer = GetConsumerFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+            webrtcTransport->ChangeUfragPwd(usernameFragment, password);
 
-					return;
-				}
+            Json::Value data(Json::objectValue);
 
-				consumer->Pause();
+            data[JsonStringUsernameFragment] = usernameFragment;
+            data[JsonStringPassword]         = password;
 
-				request->Accept();
+            request->Accept(data);
 
-				break;
-			}
+            break;
+        }
 
-			case Channel::Request::MethodId::CONSUMER_RESUME:
-			{
-				RTC::Consumer* consumer;
+        case Channel::Request::MethodId::TRANSPORT_START_MIRRORING:
+        {
+            static const Json::StaticString JsonStringRemoteIP{ "remoteIP" };
+            static const Json::StaticString JsonStringRemotePort{ "remotePort" };
+            static const Json::StaticString JsonStringLocalIP{ "localIP" };
+            static const Json::StaticString JsonStringSendRtp{ "sendRtp" };
+            static const Json::StaticString JsonStringSendRtcp{ "sendRtcp" };
+            static const Json::StaticString JsonStringRecvRtp{ "recvRtp" };
+            static const Json::StaticString JsonStringRecvRtcp{ "recvRtcp" };
 
-				try
-				{
-					consumer = GetConsumerFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+            RTC::Transport* transport;
 
-					return;
-				}
+            try
+            {
+                transport = GetTransportFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-				consumer->Resume();
+                return;
+            }
 
-				request->Accept();
+            RTC::Transport::MirroringOptions options;
 
-				break;
-			}
+            if (!request->data[JsonStringRemoteIP].isString())
+            {
+                request->Reject("missing remoteIP");
 
-			case Channel::Request::MethodId::CONSUMER_SET_PREFERRED_PROFILE:
-			{
-				static const Json::StaticString JsonStringProfile{ "profile" };
+                return;
+            }
 
-				RTC::Consumer* consumer;
+            options.remoteIP = request->data[JsonStringRemoteIP].asString();
 
-				try
-				{
-					consumer = GetConsumerFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+            if (!request->data[JsonStringRemotePort].isUInt())
+            {
+                request->Reject("missing remotePort");
 
-					return;
-				}
+                return;
+            }
 
-				if (!request->data[JsonStringProfile].isString())
-				{
-					request->Reject("missing data.profile");
+            options.remotePort = request->data[JsonStringRemotePort].asUInt();
 
-					return;
-				}
+            if (request->data[JsonStringLocalIP].isString())
+                options.localIP = request->data[JsonStringLocalIP].asString();
 
-				std::string profileStr = request->data[JsonStringProfile].asString();
-				auto it                = RTC::RtpEncodingParameters::string2Profile.find(profileStr);
+            if (request->data[JsonStringSendRtp].isBool())
+                options.sendRtp = request->data[JsonStringSendRtp].asBool();
 
-				if (it == RTC::RtpEncodingParameters::string2Profile.end())
-				{
-					request->Reject("unknown profile");
+            if (request->data[JsonStringSendRtcp].isBool())
+                options.sendRtcp = request->data[JsonStringSendRtcp].asBool();
 
-					return;
-				}
+            if (request->data[JsonStringRecvRtp].isBool())
+                options.recvRtp = request->data[JsonStringRecvRtp].asBool();
 
-				auto profile = it->second;
+            if (request->data[JsonStringRecvRtcp].isBool())
+                options.recvRtcp = request->data[JsonStringRecvRtcp].asBool();
 
-				if (profile == RTC::RtpEncodingParameters::Profile::NONE)
-				{
-					request->Reject("invalid profile");
+            try
+            {
+                transport->StartMirroring(options);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-					return;
-				}
+                return;
+            }
 
-				consumer->SetPreferredProfile(profile);
+            MS_DEBUG_DEV("Transport mirroring started [transportId:%" PRIu32 "]", transport->transportId);
 
-				request->Accept();
+            request->Accept();
 
-				break;
-			}
+            break;
+        }
 
-			case Channel::Request::MethodId::CONSUMER_SET_ENCODING_PREFERENCES:
-			{
-				static const Json::StaticString JsonStringQualityLayer{ "qualityLayer" };
-				static const Json::StaticString JsonStringSpatialLayer{ "spatialLayer" };
-				static const Json::StaticString JsonStringTemporalLayer{ "temporalLayer" };
+        case Channel::Request::MethodId::TRANSPORT_STOP_MIRRORING:
+        {
+            RTC::Transport* transport;
 
-				RTC::Consumer* consumer;
+            try
+            {
+                transport = GetTransportFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-				try
-				{
-					consumer = GetConsumerFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+                return;
+            }
 
-					return;
-				}
+            transport->StopMirroring();
 
-				RTC::Codecs::EncodingContext::Preferences preferences;
+            MS_DEBUG_DEV("Transport mirroring stopped [transportId:%" PRIu32 "]", transport->transportId);
 
-				if (request->data[JsonStringQualityLayer].isUInt())
-					preferences.qualityLayer = request->data[JsonStringQualityLayer].asUInt();
-				if (request->data[JsonStringSpatialLayer].isUInt())
-					preferences.spatialLayer = request->data[JsonStringSpatialLayer].asUInt();
-				if (request->data[JsonStringTemporalLayer].isUInt())
-					preferences.temporalLayer = request->data[JsonStringTemporalLayer].asUInt();
+            request->Accept();
 
-				consumer->SetEncodingPreferences(preferences);
+            break;
+        }
 
-				request->Accept();
+        case Channel::Request::MethodId::PRODUCER_CLOSE:
+        {
+            RTC::Producer* producer;
 
-				break;
-			}
+            try
+            {
+                producer = GetProducerFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-			case Channel::Request::MethodId::CONSUMER_REQUEST_KEY_FRAME:
-			{
-				RTC::Consumer* consumer;
+                return;
+            }
 
-				try
-				{
-					consumer = GetConsumerFromRequest(request);
-				}
-				catch (const MediaSoupError& error)
-				{
-					request->Reject(error.what());
+            delete producer;
 
-					return;
-				}
+            MS_DEBUG_DEV("Producer closed [producerId:%" PRIu32 "]", producer->producerId);
 
-				consumer->RequestKeyFrame();
+            request->Accept();
 
-				request->Accept();
+            break;
+        }
 
-				break;
-			}
+        case Channel::Request::MethodId::PRODUCER_DUMP:
+        {
+            RTC::Producer* producer;
 
-			default:
-			{
-				MS_ERROR("unknown method");
+            try
+            {
+                producer = GetProducerFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-				request->Reject("unknown method");
-			}
-		}
-	}
+                return;
+            }
 
-	/**
-	 * Looks for internal.transportId numeric field and ensures no Transport exists
-	 * with such a id.
-	 * NOTE: It may throw if invalid request or Transport already exists.
-	 */
-	uint32_t Router::GetNewTransportIdFromRequest(Channel::Request* request) const
-	{
-		MS_TRACE();
+            auto json = producer->ToJson();
 
-		static const Json::StaticString JsonStringTransportId{ "transportId" };
+            request->Accept(json);
 
-		auto jsonTransportId = request->internal[JsonStringTransportId];
+            break;
+        }
 
-		if (!jsonTransportId.isUInt())
-			MS_THROW_ERROR("Request has not numeric internal.transportId");
+        case Channel::Request::MethodId::PRODUCER_GET_STATS:
+        {
+            RTC::Producer* producer;
 
-		uint32_t transportId = jsonTransportId.asUInt();
+            try
+            {
+                producer = GetProducerFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-		if (this->transports.find(transportId) != this->transports.end())
-			MS_THROW_ERROR("a Transport with same transportId already exists");
+                return;
+            }
 
-		return transportId;
-	}
+            auto json = producer->GetStats();
 
-	/**
-	 * Looks for internal.transportId numeric field and returns the corresponding
-	 * Transport.
-	 * NOTE: It may throw if invalid request or Transport does not exist.
-	 */
-	RTC::Transport* Router::GetTransportFromRequest(Channel::Request* request) const
-	{
-		MS_TRACE();
+            request->Accept(json);
 
-		static const Json::StaticString JsonStringTransportId{ "transportId" };
+            break;
+        }
 
-		auto jsonTransportId = request->internal[JsonStringTransportId];
+        case Channel::Request::MethodId::PRODUCER_PAUSE:
+        {
+            RTC::Producer* producer;
 
-		if (!jsonTransportId.isUInt())
-			MS_THROW_ERROR("Request has not numeric internal.transportId");
+            try
+            {
+                producer = GetProducerFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-		uint32_t transportId = jsonTransportId.asUInt();
+                return;
+            }
 
-		auto it = this->transports.find(transportId);
-		if (it == this->transports.end())
-			MS_THROW_ERROR("Transport not found");
+            producer->Pause();
 
-		auto* transport = it->second;
+            request->Accept();
 
-		return transport;
-	}
+            break;
+        }
 
-	/**
-	 * Looks for internal.producerId numeric field and ensures no Producer exists
-	 * with such a id.
-	 * NOTE: It may throw if invalid request or Producer already exists.
-	 */
-	uint32_t Router::GetNewProducerIdFromRequest(Channel::Request* request) const
-	{
-		MS_TRACE();
+        case Channel::Request::MethodId::PRODUCER_RESUME:
+        {
+            RTC::Producer* producer;
 
-		static const Json::StaticString JsonStringProducerId{ "producerId" };
+            try
+            {
+                producer = GetProducerFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-		auto jsonProducerId = request->internal[JsonStringProducerId];
+                return;
+            }
 
-		if (!jsonProducerId.isUInt())
-			MS_THROW_ERROR("Request has not numeric internal.producerId");
+            producer->Resume();
 
-		uint32_t producerId = jsonProducerId.asUInt();
+            request->Accept();
 
-		if (this->producers.find(producerId) != this->producers.end())
-			MS_THROW_ERROR("a Producer with same producerId already exists");
+            break;
+        }
 
-		return producerId;
-	}
+        case Channel::Request::MethodId::PRODUCER_SET_PREFERRED_PROFILE:
+        {
+            static const Json::StaticString JsonStringProfile{ "profile" };
 
-	/**
-	 * Looks for internal.producerId numeric field and returns the corresponding
-	 * Producer.
-	 * NOTE: It may throw if invalid request or Producer does not exist.
-	 */
-	RTC::Producer* Router::GetProducerFromRequest(Channel::Request* request) const
-	{
-		MS_TRACE();
+            RTC::Producer* producer;
 
-		static const Json::StaticString JsonStringProducerId{ "producerId" };
+            try
+            {
+                producer = GetProducerFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-		auto jsonProducerId = request->internal[JsonStringProducerId];
+                return;
+            }
 
-		if (!jsonProducerId.isUInt())
-			MS_THROW_ERROR("Request has not numeric internal.producerId");
+            if (!request->data[JsonStringProfile].isString())
+            {
+                request->Reject("missing data.profile");
 
-		uint32_t producerId = jsonProducerId.asUInt();
+                return;
+            }
 
-		auto it = this->producers.find(producerId);
-		if (it == this->producers.end())
-			MS_THROW_ERROR("Producer not found");
+            std::string profileStr = request->data[JsonStringProfile].asString();
+            auto it                = RTC::RtpEncodingParameters::string2Profile.find(profileStr);
 
-		auto* producer = it->second;
+            if (it == RTC::RtpEncodingParameters::string2Profile.end())
+            {
+                request->Reject("unknown profile");
 
-		return producer;
-	}
+                return;
+            }
 
-	/**
-	 * Looks for internal.consumerId numeric field and ensures no Consumer exists
-	 * with such a id.
-	 * NOTE: It may throw if invalid request or Consumer already exists.
-	 */
-	uint32_t Router::GetNewConsumerIdFromRequest(Channel::Request* request) const
-	{
-		MS_TRACE();
+            auto profile = it->second;
 
-		static const Json::StaticString JsonStringConsumerId{ "consumerId" };
+            if (profile == RTC::RtpEncodingParameters::Profile::NONE)
+            {
+                request->Reject("invalid profile");
 
-		auto jsonConsumerId = request->internal[JsonStringConsumerId];
+                return;
+            }
 
-		if (!jsonConsumerId.isUInt())
-			MS_THROW_ERROR("Request has not numeric internal.consumerId");
+            if (profile != producer->GetPreferredProfile())
+            {
+                producer->SetPreferredProfile(profile);
 
-		uint32_t consumerId = jsonConsumerId.asUInt();
+                auto& consumers = this->mapProducerConsumers[producer];
 
-		if (this->consumers.find(consumerId) != this->consumers.end())
-			MS_THROW_ERROR("a Consumer with same consumerId already exists");
+                for (auto* consumer : consumers)
+                {
+                    consumer->SetSourcePreferredProfile(profile);
+                }
+            }
 
-		return consumerId;
-	}
+            request->Accept();
 
-	/**
-	 * Looks for internal.consumerId numeric field and returns the corresponding
-	 * Consumer.
-	 * NOTE: It may throw if invalid request or Consumer does not exist.
-	 */
-	RTC::Consumer* Router::GetConsumerFromRequest(Channel::Request* request) const
-	{
-		MS_TRACE();
+            break;
+        }
 
-		static const Json::StaticString JsonStringConsumerId{ "consumerId" };
+        case Channel::Request::MethodId::CONSUMER_CLOSE:
+        {
+            RTC::Consumer* consumer;
 
-		auto jsonConsumerId = request->internal[JsonStringConsumerId];
+            try
+            {
+                consumer = GetConsumerFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-		if (!jsonConsumerId.isUInt())
-			MS_THROW_ERROR("Request has not numeric internal.consumerId");
+                return;
+            }
 
-		uint32_t consumerId = jsonConsumerId.asUInt();
+            delete consumer;
 
-		auto it = this->consumers.find(consumerId);
-		if (it == this->consumers.end())
-			MS_THROW_ERROR("Consumer not found");
+            request->Accept();
 
-		auto* consumer = it->second;
+            break;
+        }
 
-		return consumer;
-	}
+        case Channel::Request::MethodId::CONSUMER_ENABLE:
+        {
+            static const Json::StaticString JsonStringRtpParameters{ "rtpParameters" };
 
-	void Router::OnTransportClosed(RTC::Transport* transport)
-	{
-		MS_TRACE();
+            RTC::Consumer* consumer;
 
-		this->transports.erase(transport->transportId);
-	}
+            try
+            {
+                consumer = GetConsumerFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-	void Router::OnProducerClosed(RTC::Producer* producer)
-	{
-		MS_TRACE();
+                return;
+            }
 
-		this->producers.erase(producer->producerId);
+            RTC::Transport* transport;
 
-		// Remove the Producer from the map.
-		// NOTE: It may not exist if it failed before being inserted into the maps.
-		if (this->mapProducerConsumers.find(producer) != this->mapProducerConsumers.end())
-		{
-			// Iterate the map and close all the Consumers associated to it.
-			auto& consumers = this->mapProducerConsumers[producer];
+            try
+            {
+                transport = GetTransportFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-			for (auto it = consumers.begin(); it != consumers.end();)
-			{
-				auto* consumer = *it;
+                return;
+            }
 
-				it = consumers.erase(it);
-				delete consumer;
-			}
+            if (!request->data[JsonStringRtpParameters].isObject())
+            {
+                request->Reject("missing data.rtpParameters");
 
-			// Finally delete the Producer entry in the map.
-			this->mapProducerConsumers.erase(producer);
-		}
+                return;
+            }
 
-		// Also delete it from the map of audio levels.
-		this->mapProducerAudioLevelContainer.erase(producer);
-	}
+            RTC::RtpParameters rtpParameters;
 
-	void Router::OnProducerPaused(RTC::Producer* producer)
-	{
-		MS_TRACE();
+            try
+            {
+                // NOTE: This may throw.
+                rtpParameters = RTC::RtpParameters(request->data[JsonStringRtpParameters]);
 
-		MS_ASSERT(
-		  this->mapProducerConsumers.find(producer) != this->mapProducerConsumers.end(),
-		  "Producer not present in mapProducerConsumers");
+                // NOTE: This may throw.
+                consumer->Enable(transport, rtpParameters);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-		auto& consumers = this->mapProducerConsumers[producer];
+                return;
+            }
 
-		for (auto* consumer : consumers)
-		{
-			consumer->SourcePause();
-		}
-	}
+            // Tell the Transport to handle the new Consumer.
+            transport->HandleConsumer(consumer);
 
-	void Router::OnProducerResumed(RTC::Producer* producer)
-	{
-		MS_TRACE();
+            request->Accept();
 
-		MS_ASSERT(
-		  this->mapProducerConsumers.find(producer) != this->mapProducerConsumers.end(),
-		  "Producer not present in mapProducerConsumers");
+            break;
+        }
 
-		auto& consumers = this->mapProducerConsumers[producer];
+        case Channel::Request::MethodId::CONSUMER_DUMP:
+        {
+            RTC::Consumer* consumer;
 
-		for (auto* consumer : consumers)
-		{
-			consumer->SourceResume();
-		}
-	}
+            try
+            {
+                consumer = GetConsumerFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-	void Router::OnProducerRtpPacket(
-	  RTC::Producer* producer, RTC::RtpPacket* packet, RTC::RtpEncodingParameters::Profile profile)
-	{
-		MS_TRACE();
+                return;
+            }
 
-		MS_ASSERT(
-		  this->mapProducerConsumers.find(producer) != this->mapProducerConsumers.end(),
-		  "Producer not present in mapProducerConsumers");
+            auto json = consumer->ToJson();
 
-		auto& consumers = this->mapProducerConsumers[producer];
+            request->Accept(json);
 
-		// Send the RtpPacket to all the Consumers associated to the Producer
-		// from which it was received.
-		for (auto* consumer : consumers)
-		{
-			if (consumer->IsEnabled())
-				consumer->SendRtpPacket(packet, profile);
-		}
+            break;
+        }
 
-		// Update audio levels.
-		if (this->audioLevelsEventEnabled && producer->kind == RTC::Media::Kind::AUDIO)
-		{
-			uint8_t volume;
-			bool voice;
+        case Channel::Request::MethodId::CONSUMER_GET_STATS:
+        {
+            RTC::Consumer* consumer;
 
-			if (packet->ReadAudioLevel(&volume, &voice))
-			{
-				int8_t dBov               = volume * -1;
-				auto& audioLevelContainer = this->mapProducerAudioLevelContainer[producer];
+            try
+            {
+                consumer = GetConsumerFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-				audioLevelContainer.numdBovs++;
-				audioLevelContainer.sumdBovs += dBov;
-			}
-		}
-	}
+                return;
+            }
 
-	void Router::OnProducerProfileEnabled(
-	  RTC::Producer* producer,
-	  RTC::RtpEncodingParameters::Profile profile,
-	  const RTC::RtpStream* rtpStream)
-	{
-		MS_TRACE();
+            auto json = consumer->GetStats();
 
-		MS_ASSERT(
-		  this->mapProducerConsumers.find(producer) != this->mapProducerConsumers.end(),
-		  "Producer not present in mapProducerConsumers");
+            request->Accept(json);
 
-		auto& consumers = this->mapProducerConsumers[producer];
+            break;
+        }
 
-		for (auto* consumer : consumers)
-		{
-			consumer->AddProfile(profile, rtpStream);
-		}
-	}
+        case Channel::Request::MethodId::CONSUMER_PAUSE:
+        {
+            RTC::Consumer* consumer;
 
-	void Router::OnProducerProfileDisabled(
-	  RTC::Producer* producer, RTC::RtpEncodingParameters::Profile profile)
-	{
-		MS_TRACE();
+            try
+            {
+                consumer = GetConsumerFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-		MS_ASSERT(
-		  this->mapProducerConsumers.find(producer) != this->mapProducerConsumers.end(),
-		  "Producer not present in mapProducerConsumers");
+                return;
+            }
 
-		auto& consumers = this->mapProducerConsumers[producer];
+            consumer->Pause();
 
-		for (auto* consumer : consumers)
-		{
-			consumer->RemoveProfile(profile);
-		}
-	}
+            request->Accept();
 
-	void Router::OnConsumerClosed(RTC::Consumer* consumer)
-	{
-		MS_TRACE();
+            break;
+        }
 
-		this->consumers.erase(consumer->consumerId);
+        case Channel::Request::MethodId::CONSUMER_RESUME:
+        {
+            RTC::Consumer* consumer;
 
-		for (auto& kv : this->mapProducerConsumers)
-		{
-			auto& consumers = kv.second;
+            try
+            {
+                consumer = GetConsumerFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-			consumers.erase(consumer);
-		}
+                return;
+            }
 
-		// Finally delete the Consumer entry in the map.
-		this->mapConsumerProducer.erase(consumer);
-	}
+            consumer->Resume();
 
-	void Router::OnConsumerKeyFrameRequired(RTC::Consumer* consumer)
-	{
-		MS_TRACE();
+            request->Accept();
 
-		MS_ASSERT(
-		  this->mapConsumerProducer.find(consumer) != this->mapConsumerProducer.end(),
-		  "Consumer not present in mapConsumerProducer");
+            break;
+        }
 
-		auto* producer = this->mapConsumerProducer[consumer];
+        case Channel::Request::MethodId::CONSUMER_SET_PREFERRED_PROFILE:
+        {
+            static const Json::StaticString JsonStringProfile{ "profile" };
 
-		producer->RequestKeyFrame();
-	}
+            RTC::Consumer* consumer;
 
-	inline void Router::OnTimer(Timer* timer)
-	{
-		MS_TRACE();
+            try
+            {
+                consumer = GetConsumerFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
 
-		static const Json::StaticString JsonStringEntries{ "entries" };
+                return;
+            }
 
-		// Audio levels timer.
-		if (timer == this->audioLevelsTimer)
-		{
-			Json::Value eventData(Json::objectValue);
+            if (!request->data[JsonStringProfile].isString())
+            {
+                request->Reject("missing data.profile");
 
-			eventData[JsonStringEntries] = Json::arrayValue;
+                return;
+            }
 
-			for (auto& kv : this->mapProducerAudioLevelContainer)
-			{
-				auto* producer            = kv.first;
-				auto& audioLevelContainer = kv.second;
-				auto numdBovs             = audioLevelContainer.numdBovs;
-				auto sumdBovs             = audioLevelContainer.sumdBovs;
-				int8_t avgdBov{ -127 };
+            std::string profileStr = request->data[JsonStringProfile].asString();
+            auto it                = RTC::RtpEncodingParameters::string2Profile.find(profileStr);
 
-				if (numdBovs > 0)
-					avgdBov = static_cast<int8_t>(std::lround(sumdBovs / numdBovs));
-				else
-					avgdBov = -127;
+            if (it == RTC::RtpEncodingParameters::string2Profile.end())
+            {
+                request->Reject("unknown profile");
 
-				Json::Value entry(Json::arrayValue);
+                return;
+            }
 
-				entry.append(Json::UInt{ producer->producerId });
-				entry.append(Json::Int{ avgdBov });
+            auto profile = it->second;
 
-				eventData[JsonStringEntries].append(entry);
-			}
+            if (profile == RTC::RtpEncodingParameters::Profile::NONE)
+            {
+                request->Reject("invalid profile");
 
-			// Clear map.
-			this->mapProducerAudioLevelContainer.clear();
+                return;
+            }
 
-			// Emit event.
-			this->notifier->Emit(this->routerId, "audiolevels", eventData);
-		}
-	}
+            consumer->SetPreferredProfile(profile);
+
+            request->Accept();
+
+            break;
+        }
+
+        case Channel::Request::MethodId::CONSUMER_SET_ENCODING_PREFERENCES:
+        {
+            static const Json::StaticString JsonStringQualityLayer{ "qualityLayer" };
+            static const Json::StaticString JsonStringSpatialLayer{ "spatialLayer" };
+            static const Json::StaticString JsonStringTemporalLayer{ "temporalLayer" };
+
+            RTC::Consumer* consumer;
+
+            try
+            {
+                consumer = GetConsumerFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
+
+                return;
+            }
+
+            RTC::Codecs::EncodingContext::Preferences preferences;
+
+            if (request->data[JsonStringQualityLayer].isUInt())
+                preferences.qualityLayer = request->data[JsonStringQualityLayer].asUInt();
+
+            if (request->data[JsonStringSpatialLayer].isUInt())
+                preferences.spatialLayer = request->data[JsonStringSpatialLayer].asUInt();
+
+            if (request->data[JsonStringTemporalLayer].isUInt())
+                preferences.temporalLayer = request->data[JsonStringTemporalLayer].asUInt();
+
+            consumer->SetEncodingPreferences(preferences);
+
+            request->Accept();
+
+            break;
+        }
+
+        case Channel::Request::MethodId::CONSUMER_REQUEST_KEY_FRAME:
+        {
+            RTC::Consumer* consumer;
+
+            try
+            {
+                consumer = GetConsumerFromRequest(request);
+            }
+            catch (const MediaSoupError& error)
+            {
+                request->Reject(error.what());
+
+                return;
+            }
+
+            consumer->RequestKeyFrame();
+
+            request->Accept();
+
+            break;
+        }
+
+        default:
+        {
+            MS_ERROR("unknown method");
+
+            request->Reject("unknown method");
+        }
+    }
+}
+
+/**
+ * Looks for internal.transportId numeric field and ensures no Transport exists
+ * with such a id.
+ * NOTE: It may throw if invalid request or Transport already exists.
+ */
+uint32_t Router::GetNewTransportIdFromRequest(Channel::Request* request) const
+{
+    MS_TRACE();
+
+    static const Json::StaticString JsonStringTransportId{ "transportId" };
+
+    auto jsonTransportId = request->internal[JsonStringTransportId];
+
+    if (!jsonTransportId.isUInt())
+        MS_THROW_ERROR("Request has not numeric internal.transportId");
+
+    uint32_t transportId = jsonTransportId.asUInt();
+
+    if (this->transports.find(transportId) != this->transports.end())
+        MS_THROW_ERROR("a Transport with same transportId already exists");
+
+    return transportId;
+}
+
+/**
+ * Looks for internal.transportId numeric field and returns the corresponding
+ * Transport.
+ * NOTE: It may throw if invalid request or Transport does not exist.
+ */
+RTC::Transport* Router::GetTransportFromRequest(Channel::Request* request) const
+{
+    MS_TRACE();
+
+    static const Json::StaticString JsonStringTransportId{ "transportId" };
+
+    auto jsonTransportId = request->internal[JsonStringTransportId];
+
+    if (!jsonTransportId.isUInt())
+        MS_THROW_ERROR("Request has not numeric internal.transportId");
+
+    uint32_t transportId = jsonTransportId.asUInt();
+
+    auto it = this->transports.find(transportId);
+
+    if (it == this->transports.end())
+        MS_THROW_ERROR("Transport not found");
+
+    auto* transport = it->second;
+
+    return transport;
+}
+
+/**
+ * Looks for internal.producerId numeric field and ensures no Producer exists
+ * with such a id.
+ * NOTE: It may throw if invalid request or Producer already exists.
+ */
+uint32_t Router::GetNewProducerIdFromRequest(Channel::Request* request) const
+{
+    MS_TRACE();
+
+    static const Json::StaticString JsonStringProducerId{ "producerId" };
+
+    auto jsonProducerId = request->internal[JsonStringProducerId];
+
+    if (!jsonProducerId.isUInt())
+        MS_THROW_ERROR("Request has not numeric internal.producerId");
+
+    uint32_t producerId = jsonProducerId.asUInt();
+
+    if (this->producers.find(producerId) != this->producers.end())
+        MS_THROW_ERROR("a Producer with same producerId already exists");
+
+    return producerId;
+}
+
+/**
+ * Looks for internal.producerId numeric field and returns the corresponding
+ * Producer.
+ * NOTE: It may throw if invalid request or Producer does not exist.
+ */
+RTC::Producer* Router::GetProducerFromRequest(Channel::Request* request) const
+{
+    MS_TRACE();
+
+    static const Json::StaticString JsonStringProducerId{ "producerId" };
+
+    auto jsonProducerId = request->internal[JsonStringProducerId];
+
+    if (!jsonProducerId.isUInt())
+        MS_THROW_ERROR("Request has not numeric internal.producerId");
+
+    uint32_t producerId = jsonProducerId.asUInt();
+
+    auto it = this->producers.find(producerId);
+
+    if (it == this->producers.end())
+        MS_THROW_ERROR("Producer not found");
+
+    auto* producer = it->second;
+
+    return producer;
+}
+
+/**
+ * Looks for internal.consumerId numeric field and ensures no Consumer exists
+ * with such a id.
+ * NOTE: It may throw if invalid request or Consumer already exists.
+ */
+uint32_t Router::GetNewConsumerIdFromRequest(Channel::Request* request) const
+{
+    MS_TRACE();
+
+    static const Json::StaticString JsonStringConsumerId{ "consumerId" };
+
+    auto jsonConsumerId = request->internal[JsonStringConsumerId];
+
+    if (!jsonConsumerId.isUInt())
+        MS_THROW_ERROR("Request has not numeric internal.consumerId");
+
+    uint32_t consumerId = jsonConsumerId.asUInt();
+
+    if (this->consumers.find(consumerId) != this->consumers.end())
+        MS_THROW_ERROR("a Consumer with same consumerId already exists");
+
+    return consumerId;
+}
+
+/**
+ * Looks for internal.consumerId numeric field and returns the corresponding
+ * Consumer.
+ * NOTE: It may throw if invalid request or Consumer does not exist.
+ */
+RTC::Consumer* Router::GetConsumerFromRequest(Channel::Request* request) const
+{
+    MS_TRACE();
+
+    static const Json::StaticString JsonStringConsumerId{ "consumerId" };
+
+    auto jsonConsumerId = request->internal[JsonStringConsumerId];
+
+    if (!jsonConsumerId.isUInt())
+        MS_THROW_ERROR("Request has not numeric internal.consumerId");
+
+    uint32_t consumerId = jsonConsumerId.asUInt();
+
+    auto it = this->consumers.find(consumerId);
+
+    if (it == this->consumers.end())
+        MS_THROW_ERROR("Consumer not found");
+
+    auto* consumer = it->second;
+
+    return consumer;
+}
+
+void Router::OnTransportClosed(RTC::Transport* transport)
+{
+    MS_TRACE();
+
+    this->transports.erase(transport->transportId);
+}
+
+void Router::OnProducerClosed(RTC::Producer* producer)
+{
+    MS_TRACE();
+
+    this->producers.erase(producer->producerId);
+
+    // Remove the Producer from the map.
+    // NOTE: It may not exist if it failed before being inserted into the maps.
+    if (this->mapProducerConsumers.find(producer) != this->mapProducerConsumers.end())
+    {
+        // Iterate the map and close all the Consumers associated to it.
+        auto& consumers = this->mapProducerConsumers[producer];
+
+        for (auto it = consumers.begin(); it != consumers.end();)
+        {
+            auto* consumer = *it;
+
+            it = consumers.erase(it);
+            delete consumer;
+        }
+
+        // Finally delete the Producer entry in the map.
+        this->mapProducerConsumers.erase(producer);
+    }
+
+    // Also delete it from the map of audio levels.
+    this->mapProducerAudioLevelContainer.erase(producer);
+}
+
+void Router::OnProducerPaused(RTC::Producer* producer)
+{
+    MS_TRACE();
+
+    MS_ASSERT(
+        this->mapProducerConsumers.find(producer) != this->mapProducerConsumers.end(),
+        "Producer not present in mapProducerConsumers");
+
+    auto& consumers = this->mapProducerConsumers[producer];
+
+    for (auto* consumer : consumers)
+    {
+        consumer->SourcePause();
+    }
+}
+
+void Router::OnProducerResumed(RTC::Producer* producer)
+{
+    MS_TRACE();
+
+    MS_ASSERT(
+        this->mapProducerConsumers.find(producer) != this->mapProducerConsumers.end(),
+        "Producer not present in mapProducerConsumers");
+
+    auto& consumers = this->mapProducerConsumers[producer];
+
+    for (auto* consumer : consumers)
+    {
+        consumer->SourceResume();
+    }
+}
+
+void Router::OnProducerRtpPacket(
+    RTC::Producer* producer, RTC::RtpPacket* packet, RTC::RtpEncodingParameters::Profile profile)
+{
+    MS_TRACE();
+
+    MS_ASSERT(
+        this->mapProducerConsumers.find(producer) != this->mapProducerConsumers.end(),
+        "Producer not present in mapProducerConsumers");
+
+    auto& consumers = this->mapProducerConsumers[producer];
+
+    // Send the RtpPacket to all the Consumers associated to the Producer
+    // from which it was received.
+    for (auto* consumer : consumers)
+    {
+        if (consumer->IsEnabled())
+            consumer->SendRtpPacket(packet, profile);
+    }
+
+    // Update audio levels.
+    if (this->audioLevelsEventEnabled && producer->kind == RTC::Media::Kind::AUDIO)
+    {
+        uint8_t volume;
+        bool voice;
+
+        if (packet->ReadAudioLevel(&volume, &voice))
+        {
+            int8_t dBov               = volume * -1;
+            auto& audioLevelContainer = this->mapProducerAudioLevelContainer[producer];
+
+            audioLevelContainer.numdBovs++;
+            audioLevelContainer.sumdBovs += dBov;
+        }
+    }
+}
+
+void Router::OnProducerProfileEnabled(
+    RTC::Producer* producer,
+    RTC::RtpEncodingParameters::Profile profile,
+    const RTC::RtpStream* rtpStream)
+{
+    MS_TRACE();
+
+    MS_ASSERT(
+        this->mapProducerConsumers.find(producer) != this->mapProducerConsumers.end(),
+        "Producer not present in mapProducerConsumers");
+
+    auto& consumers = this->mapProducerConsumers[producer];
+
+    for (auto* consumer : consumers)
+    {
+        consumer->AddProfile(profile, rtpStream);
+    }
+}
+
+void Router::OnProducerProfileDisabled(
+    RTC::Producer* producer, RTC::RtpEncodingParameters::Profile profile)
+{
+    MS_TRACE();
+
+    MS_ASSERT(
+        this->mapProducerConsumers.find(producer) != this->mapProducerConsumers.end(),
+        "Producer not present in mapProducerConsumers");
+
+    auto& consumers = this->mapProducerConsumers[producer];
+
+    for (auto* consumer : consumers)
+    {
+        consumer->RemoveProfile(profile);
+    }
+}
+
+void Router::OnConsumerClosed(RTC::Consumer* consumer)
+{
+    MS_TRACE();
+
+    this->consumers.erase(consumer->consumerId);
+
+    for (auto& kv : this->mapProducerConsumers)
+    {
+        auto& consumers = kv.second;
+
+        consumers.erase(consumer);
+    }
+
+    // Finally delete the Consumer entry in the map.
+    this->mapConsumerProducer.erase(consumer);
+}
+
+void Router::OnConsumerKeyFrameRequired(RTC::Consumer* consumer)
+{
+    MS_TRACE();
+
+    MS_ASSERT(
+        this->mapConsumerProducer.find(consumer) != this->mapConsumerProducer.end(),
+        "Consumer not present in mapConsumerProducer");
+
+    auto* producer = this->mapConsumerProducer[consumer];
+
+    producer->RequestKeyFrame();
+}
+
+inline void Router::OnTimer(Timer* timer)
+{
+    MS_TRACE();
+
+    static const Json::StaticString JsonStringEntries{ "entries" };
+
+    // Audio levels timer.
+    if (timer == this->audioLevelsTimer)
+    {
+        Json::Value eventData(Json::objectValue);
+
+        eventData[JsonStringEntries] = Json::arrayValue;
+
+        for (auto& kv : this->mapProducerAudioLevelContainer)
+        {
+            auto* producer            = kv.first;
+            auto& audioLevelContainer = kv.second;
+            auto numdBovs             = audioLevelContainer.numdBovs;
+            auto sumdBovs             = audioLevelContainer.sumdBovs;
+            int8_t avgdBov{ -127 };
+
+            if (numdBovs > 0)
+                avgdBov = static_cast<int8_t>(std::lround(sumdBovs / numdBovs));
+            else
+                avgdBov = -127;
+
+            Json::Value entry(Json::arrayValue);
+
+            entry.append(Json::UInt{ producer->producerId });
+            entry.append(Json::Int{ avgdBov });
+
+            eventData[JsonStringEntries].append(entry);
+        }
+
+        // Clear map.
+        this->mapProducerAudioLevelContainer.clear();
+
+        // Emit event.
+        this->notifier->Emit(this->routerId, "audiolevels", eventData);
+    }
+}
 } // namespace RTC

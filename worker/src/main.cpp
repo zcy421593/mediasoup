@@ -22,7 +22,7 @@
 #include <iostream> // std::cout, std::cerr, std::endl
 #include <map>
 #include <string>
-#include <unistd.h> // getpid(), usleep()
+//#include <unistd.h> // getpid(), usleep()
 
 static void init();
 static void ignoreSignals();
@@ -32,155 +32,169 @@ static void exitWithError();
 
 int main(int argc, char* argv[])
 {
-	// Ensure we are called by our Node library.
-	if (argc == 1 || (std::getenv("MEDIASOUP_CHANNEL_FD") == nullptr))
-	{
-		std::cerr << "ERROR: you don't seem to be my real father" << std::endl;
+    WSADATA data;
+    WSAStartup(MAKEWORD(2, 2), &data);
 
-		std::_Exit(EXIT_FAILURE);
-	}
+    // Ensure we are called by our Node library.
 
-	std::string id = std::string(argv[1]);
-	int channelFd  = std::stoi(std::getenv("MEDIASOUP_CHANNEL_FD"));
+    /*
+    if (argc == 1 || (std::getenv("MEDIASOUP_CHANNEL_FD") == nullptr))
+    {
+        std::cerr << "ERROR: you don't seem to be my real father" << std::endl;
 
-	// Initialize libuv stuff (we need it for the Channel).
-	DepLibUV::ClassInit();
+        std::_Exit(EXIT_FAILURE);
+    }
 
-	// Set the Channel socket (this will be handled and deleted by the Worker).
-	auto* channel = new Channel::UnixStreamSocket(channelFd);
+    std::string id = std::string(argv[1]);
+    int channelFd  = std::stoi(std::getenv("MEDIASOUP_CHANNEL_FD"));
+      */
+    // Initialize libuv stuff (we need it for the Channel).
+    DepLibUV::ClassInit();
 
-	// Initialize the Logger.
-	Logger::Init(id, channel);
+    // Set the Channel socket (this will be handled and deleted by the Worker).
+    //auto* channel = new Channel::UnixStreamSocket(channelFd);
 
-	// Setup the configuration.
-	try
-	{
-		Settings::SetConfiguration(argc, argv);
-	}
-	catch (const MediaSoupError& error)
-	{
-		MS_ERROR("configuration error: %s", error.what());
+    // Initialize the Logger.
+    //Logger::Init(id, channel);
 
-		exitWithError();
-	}
+    // Setup the configuration.
+    try
+    {
+        //Settings::SetConfiguration(argc, argv);
+        Settings::SetDefaultConfig();
+    }
+    catch (const MediaSoupError& error)
+    {
+        MS_ERROR("configuration error: %s", error.what());
 
-	// Print the effective configuration.
-	Settings::PrintConfiguration();
+        exitWithError();
+    }
 
-	MS_DEBUG_TAG(info, "starting mediasoup-worker [pid:%ld]", (long)getpid());
+    // Print the effective configuration.
+    Settings::PrintConfiguration();
+
+    MS_DEBUG_TAG(info, "starting mediasoup-worker [pid:%ld]", (long)getpid());
 
 #if defined(MS_LITTLE_ENDIAN)
-	MS_DEBUG_TAG(info, "Little-Endian CPU detected");
+    MS_DEBUG_TAG(info, "Little-Endian CPU detected");
 #elif defined(MS_BIG_ENDIAN)
-	MS_DEBUG_TAG(info, "Big-Endian CPU detected");
+    MS_DEBUG_TAG(info, "Big-Endian CPU detected");
 #endif
 
 #if defined(INTPTR_MAX) && defined(INT32_MAX) && (INTPTR_MAX == INT32_MAX)
-	MS_DEBUG_TAG(info, "32 bits architecture detected");
+    MS_DEBUG_TAG(info, "32 bits architecture detected");
 #elif defined(INTPTR_MAX) && defined(INT64_MAX) && (INTPTR_MAX == INT64_MAX)
-	MS_DEBUG_TAG(info, "64 bits architecture detected");
+    MS_DEBUG_TAG(info, "64 bits architecture detected");
 #else
-	MS_WARN_TAG(info, "can not determine whether the architecture is 32 or 64 bits");
+    MS_WARN_TAG(info, "can not determine whether the architecture is 32 or 64 bits");
 #endif
 
-	try
-	{
-		init();
+    try
+    {
+        init();
 
-		// Run the Worker.
-		Worker worker(channel);
+        // Run the Worker.
+        Worker worker(NULL);
 
-		// Worker ended.
-		destroy();
+        // Worker ended.
+        destroy();
 
-		exitSuccess();
-	}
-	catch (const MediaSoupError& error)
-	{
-		MS_ERROR_STD("failure exit: %s", error.what());
+        exitSuccess();
+    }
+    catch (const MediaSoupError& error)
+    {
+        MS_ERROR_STD("failure exit: %s", error.what());
+        getchar();
+        destroy();
+        exitWithError();
 
-		destroy();
-		exitWithError();
-	}
+    }
 }
 
 void init()
 {
-	MS_TRACE();
+    MS_TRACE();
 
-	ignoreSignals();
-	DepLibUV::PrintVersion();
+    ignoreSignals();
+    DepLibUV::PrintVersion();
 
-	// Initialize static stuff.
-	DepOpenSSL::ClassInit();
-	DepLibSRTP::ClassInit();
-	Utils::Crypto::ClassInit();
-	RTC::UdpSocket::ClassInit();
-	RTC::TcpServer::ClassInit();
-	RTC::DtlsTransport::ClassInit();
-	RTC::SrtpSession::ClassInit();
+    // Initialize static stuff.
+    DepOpenSSL::ClassInit();
+    DepLibSRTP::ClassInit();
+    Utils::Crypto::ClassInit();
+    RTC::UdpSocket::ClassInit();
+    RTC::TcpServer::ClassInit();
+    RTC::DtlsTransport::ClassInit();
+    RTC::SrtpSession::ClassInit();
 }
 
 void ignoreSignals()
 {
-	MS_TRACE();
+#if 0
+    MS_TRACE();
 
-	int err;
-	struct sigaction act;
-	// clang-format off
-	std::map<std::string, int> ignoredSignals =
-	{
-		{ "PIPE", SIGPIPE },
-		{ "HUP",  SIGHUP  },
-		{ "ALRM", SIGALRM },
-		{ "USR1", SIGUSR2 },
-		{ "USR2", SIGUSR1}
-	};
-	// clang-format on
+    int err;
+    struct sigaction act;
+    // clang-format off
+    std::map<std::string, int> ignoredSignals =
+    {
+        { "PIPE", SIGPIPE },
+        { "HUP",  SIGHUP  },
+        { "ALRM", SIGALRM },
+        { "USR1", SIGUSR2 },
+        { "USR2", SIGUSR1}
+    };
+    // clang-format on
 
-	// Ignore clang-tidy cppcoreguidelines-pro-type-cstyle-cast.
-	act.sa_handler = SIG_IGN; // NOLINT
-	act.sa_flags   = 0;
-	err            = sigfillset(&act.sa_mask);
-	if (err != 0)
-		MS_THROW_ERROR("sigfillset() failed: %s", std::strerror(errno));
+    // Ignore clang-tidy cppcoreguidelines-pro-type-cstyle-cast.
+    act.sa_handler = SIG_IGN; // NOLINT
+    act.sa_flags   = 0;
+    err            = sigfillset(&act.sa_mask);
 
-	for (auto& ignoredSignal : ignoredSignals)
-	{
-		auto& sigName = ignoredSignal.first;
-		int sigId     = ignoredSignal.second;
+    if (err != 0)
+        MS_THROW_ERROR("sigfillset() failed: %s", std::strerror(errno));
 
-		err = sigaction(sigId, &act, nullptr);
-		if (err != 0)
-		{
-			MS_THROW_ERROR("sigaction() failed for signal %s: %s", sigName.c_str(), std::strerror(errno));
-		}
-	}
+    for (auto& ignoredSignal : ignoredSignals)
+    {
+        auto& sigName = ignoredSignal.first;
+        int sigId     = ignoredSignal.second;
+
+        err = sigaction(sigId, &act, nullptr);
+
+        if (err != 0)
+        {
+            MS_THROW_ERROR("sigaction() failed for signal %s: %s", sigName.c_str(), std::strerror(errno));
+        }
+    }
+
+#endif
 }
 
 void destroy()
 {
-	MS_TRACE();
+    MS_TRACE();
 
-	// Free static stuff.
-	RTC::DtlsTransport::ClassDestroy();
-	Utils::Crypto::ClassDestroy();
-	DepLibUV::ClassDestroy();
-	DepLibSRTP::ClassDestroy();
+    // Free static stuff.
+    RTC::DtlsTransport::ClassDestroy();
+    Utils::Crypto::ClassDestroy();
+    DepLibUV::ClassDestroy();
+    DepLibSRTP::ClassDestroy();
 }
 
 void exitSuccess()
 {
-	// Wait a bit so peding messages to stdout/Channel arrive to the main process.
-	usleep(100000);
-	// And exit with success status.
-	std::_Exit(EXIT_SUCCESS);
+    // Wait a bit so peding messages to stdout/Channel arrive to the main process.
+    //usleep(100000);
+    Sleep(1);
+    // And exit with success status.
+    std::_Exit(EXIT_SUCCESS);
 }
 
 void exitWithError()
 {
-	// Wait a bit so peding messages to stderr arrive to the main process.
-	usleep(100000);
-	// And exit with error status.
-	std::_Exit(EXIT_FAILURE);
+    // Wait a bit so peding messages to stderr arrive to the main process.
+    //usleep(100000);
+    Sleep(1);
+    // And exit with error status.
+    std::_Exit(EXIT_FAILURE);
 }

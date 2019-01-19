@@ -161,6 +161,7 @@
     <ClCompile Include="src\DepLibSRTP.cpp" />
     <ClCompile Include="src\DepLibUV.cpp" />
     <ClCompile Include="src\DepOpenSSL.cpp" />
+    <ClCompile Include="src\getopt.c" />
     <ClCompile Include="src\Logger.cpp" />
     <ClCompile Include="src\Settings.cpp" />
     <ClCompile Include="src\Worker.cpp" />
@@ -238,12 +239,12 @@
     <ClCompile Include="src\Utils\Crypto.cpp" />
     <ClCompile Include="src\Utils\File.cpp" />
     <ClCompile Include="src\Utils\IP.cpp" />
-    <ClCompile Include="src\handles\SignalsHandler.cpp" />
-    <ClCompile Include="src\handles\TcpConnection.cpp" />
-    <ClCompile Include="src\handles\TcpServer.cpp" />
-    <ClCompile Include="src\handles\Timer.cpp" />
-    <ClCompile Include="src\handles\UdpSocket.cpp" />
-    <ClCompile Include="src\handles\UnixStreamSocket.cpp" />
+    <ClCompile Include="src\handles\SignalsHandler_h.cpp" />
+    <ClCompile Include="src\handles\TcpConnection_h.cpp" />
+    <ClCompile Include="src\handles\TcpServer_h.cpp" />
+    <ClCompile Include="src\handles\Timer_h.cpp" />
+    <ClCompile Include="src\handles\UdpSocket_h.cpp" />
+    <ClCompile Include="src\handles\UnixStreamSocket_h.cpp" />
     <ClCompile Include="src\main.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -267,6 +268,9 @@
       <Project>{94636E02-2BEA-EE2D-1909-3A8002575EF1}</Project>
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\getopt.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.targets" />
